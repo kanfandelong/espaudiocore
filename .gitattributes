@@ -1,0 +1,16 @@
+# 统一文本文件行尾为 LF。
+# 本组件是嵌入式源码（C/C++/CMake/Kconfig），保持 LF 可以避免：
+#   - 跨平台检出时整文件级别的 diff 噪音
+#   - 工具链对 CRLF 的多余处理
+* text=auto eol=lf
+
+# 明确按二进制处理（当前仓库没有这类文件，仅避免将来被误转）
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.zip  binary
+*.gz   binary
+*.a    binary
+*.o    binary

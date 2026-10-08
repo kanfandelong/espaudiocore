@@ -1,0 +1,31 @@
+# 编译产物
+# 注：lib/libopus/silk/fixed/ 下曾有 46 个上游残留的 .o/.lo，一并排除
+*.o
+*.lo
+*.obj
+*.a
+*.so
+*.dylib
+*.dll
+*.d
+*.pyc
+
+# 构建目录
+build/
+build_*/
+cmake-build-*/
+
+# IDE / 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 日志
+*.log

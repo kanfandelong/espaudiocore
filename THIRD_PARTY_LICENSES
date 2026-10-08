@@ -1,0 +1,40 @@
+本软件包含以下第三方开源组件：
+
+1. Helix AAC Decoder
+   Copyright (c) 1995-2005 RealNetworks, Inc. All Rights Reserved.
+   Licensed under the RealNetworks Public Source License Version 1.0 (RPSL-1.0).
+   许可证全文：lib/libhelix-aac/ 下各源文件头部的 LICENSE BLOCK
+
+2. libflac
+   Copyright (C) 2000-2009 Josh Coalson
+   Copyright (C) 2011-2016 Xiph.Org Foundation
+   Licensed under BSD-3-Clause.
+   许可证全文：lib/libflac/COPYING.Xiph
+
+3. libhelix-mp3
+   Copyright (c) 1995-2004 RealNetworks, Inc. All Rights Reserved.
+   Licensed under the RealNetworks Public Source License Version 1.0 (RPSL-1.0).
+   许可证全文：lib/libhelix-mp3/RPSL.txt
+
+4. libogg
+   Copyright (c) 2002, Xiph.org Foundation
+   Licensed under BSD-3-Clause.
+   许可证全文：lib/libogg/COPYING
+
+5. libopus
+   Copyright 2001-2011 Xiph.Org, Skype Limited, Octasic,
+                       Jean-Marc Valin, Timothy B. Terriberry,
+                       CSIRO, Gregory Maxwell, Mark Borgerding,
+                       Erik de Castro Lopo
+   Licensed under BSD-3-Clause.
+   许可证全文：lib/libopus/COPYING
+
+6. libvorbis
+   Copyright (c) 2002, Xiph.org Foundation
+   Licensed under BSD-3-Clause.
+   许可证全文：lib/libvorbis/COPYING
+
+7. opusfile
+   Copyright (c) 1994-2013 Xiph.Org Foundation and contributors
+   Licensed under BSD-3-Clause.
+   许可证全文：lib/opusfile/COPYING

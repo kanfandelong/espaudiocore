@@ -1,0 +1,147 @@
+menu "espaudiocore"
+
+    config ESPAUDIOCORE_LOG_LEVEL
+        int "Log level (0=NONE 1=ERROR 2=WARN 3=INFO 4=DEBUG 5=VERBOSE)"
+        range 0 5
+        default 3
+        help
+            解码核心的日志级别。也可在运行时用
+            esp_log_level_set("espaudiocore", ESP_LOG_INFO) 覆盖。
+
+    menu "Decoders"
+
+        config ESPAUDIOCORE_ENABLE_WAV
+            bool "WAV (PCM)"
+            default y
+
+        config ESPAUDIOCORE_ENABLE_MP3
+            bool "MP3 (libhelix-mp3)"
+            default y
+            help
+                使用 libhelix-mp3。该库原本只在 x86 host 上验证过，
+                xtensa/riscv 的平台分支由本组件补齐。
+
+        config ESPAUDIOCORE_ENABLE_AAC
+            bool "AAC (libhelix-aac, 含 SBR)"
+            default y
+
+        config ESPAUDIOCORE_ENABLE_FLAC
+            bool "FLAC (libflac)"
+            default y
+
+        config ESPAUDIOCORE_ENABLE_VORBIS
+            bool "OGG Vorbis (libvorbis + libogg)"
+            default y
+
+        config ESPAUDIOCORE_ENABLE_OPUS
+            bool "Opus (libopus + opusfile + libogg)"
+            default y
+            help
+                Opus 内存占用较大，无 PSRAM 的板子建议关闭。
+
+    endmenu
+
+    menu "Output"
+
+        config ESPAUDIOCORE_OUTPUT_BITS
+            int "Output bit width (0 = follow PCM, 16/24/32 = fixed)"
+            range 0 32
+            default 0
+            help
+                0  = 跟随 PCM 位宽输出，不做任何位宽处理；
+                16/24/32 = 固定位宽输出。当 PCM 位宽小于目标位宽时样本左移补齐，
+                           大于目标位宽时右移截断。
+
+                例：PCM5102 这类要求固定 32-bit 槽宽的 DAC 选 32，
+                此时 16-bit 源会被左移 16 位。
+
+                该值仅作为 espaudiocore_cfg_t::output_bits == 0 时的默认值。
+
+        config ESPAUDIOCORE_DEFAULT_VOLUME_DB
+            int "Default volume (dB, 0 = unity)"
+            range -60 12
+            default 0
+            help
+                仅作为 espaudiocore_cfg_t::volume_db 未设置时的默认值。
+                0 = 原始幅度；-60 及以下视为静音。
+                注意：I2S 与 ringbuf 两种输出**都会**施加音量；
+                需要未缩放的原始 PCM 时请保持 0 dB。
+
+    endmenu
+
+    menu "Memory"
+        choice ESPAUDIOCORE_FILE_SOURCE_MODE
+            prompt "File source read strategy"
+            default ESPAUDIOCORE_FILE_SOURCE_VFS
+
+            config ESPAUDIOCORE_FILE_SOURCE_WINDOW
+                bool "Self-managed window (default)"
+                help
+                    组件自己维护一个预读窗口，同时承担 peek（ID3/魔数探测）职责。
+                    优点：peek 不产生额外 seek；缺点：窗口边界逻辑较复杂。
+
+            config ESPAUDIOCORE_FILE_SOURCE_VFS
+                bool "Pure VFS + setvbuf (PSRAM buffer)"
+                help
+                    直接用 stdio 的缓冲（用 setvbuf 指定大小与内存 caps），
+                    不再自管理窗口。peek 通过 fseeko/fread/fseeko 实现。
+                    代码路径更简单（少一层窗口状态机）；代价是每次 peek 多两次 seek。
+                    若怀疑窗口实现有问题，可切到这个模式做对照。
+        endchoice
+
+        config ESPAUDIOCORE_SOURCE_BUFFER_SIZE
+            int "Self-managed window size (bytes)"
+            depends on ESPAUDIOCORE_FILE_SOURCE_WINDOW
+            range 4096 262144
+            default 32768
+            help
+                文件输入的预读窗口。该缓冲同时承担 peek（ID3/魔数探测）职责，
+                太小会导致频繁 VFS 调用，太大会多占 PSRAM。
+
+        config ESPAUDIOCORE_VFS_BUFFER_SIZE
+            int "setvbuf buffer size (bytes)"
+            depends on ESPAUDIOCORE_FILE_SOURCE_VFS
+            range 4096 262144
+            default 65536
+            help
+                传给 setvbuf 的缓冲大小。纯 VFS 模式没有额外窗口，
+                这里给大一些通常更划算（同样的 PSRAM 占用，预读更充分）。
+        config ESPAUDIOCORE_PSRAM_REQUIRED
+            bool "Require PSRAM for large buffers"
+            default n
+            help
+                打开后，大缓冲申请 PSRAM 失败将直接报错，而不是回退到内部 RAM。
+
+    endmenu
+
+    menu "Task"
+
+        config ESPAUDIOCORE_TASK_STACK_DEFAULT
+            int "Default decoder task stack size"
+            range 4096 65536
+            default 8192
+            help
+                兜底默认栈大小。各解码器可在路由表中给出自己的推荐值
+                （例如 Opus 建议 16384），此配置仅在推荐值为 0 时生效。
+
+        config ESPAUDIOCORE_TASK_PRIORITY
+            int "Decoder task priority"
+            range 1 24
+            default 8
+
+        config ESPAUDIOCORE_TASK_CORE
+            int "Decoder task core (-1 = no affinity)"
+            range -1 1
+            default 1
+
+    endmenu
+
+    config ESPAUDIOCORE_FLAC_XTENSA_ASM
+        bool "Enable FLAC xtensa LPC assembly (ESP32-S3)"
+        default n
+        depends on IDF_TARGET_ESP32S3
+        help
+            需要同时在 lib/libflac/config.h 中打开 EN_ESP_ASM。
+            默认关闭，因为该汇编路径未在本项目验证过。
+
+endmenu
