@@ -30,6 +30,7 @@ set(srcs
     "src/decoder_flac.cpp"
     "src/decoder_vorbis.cpp"
     "src/decoder_opus.cpp"
+    "src/decoder_wavpack.cpp"
 )
 
 # ---------------------------------------------------------------------------
@@ -249,6 +250,29 @@ if(CONFIG_ESPAUDIOCORE_ENABLE_OPUS)
         "lib/opusfile/stream.c"
     )
     list(APPEND thirdparty_incs "lib/opusfile")
+endif()
+
+if (CONFIG_ESPAUDIOCORE_ENABLE_WAVPACK)
+    list(APPEND thirdparty_incs "lib/libwavpack")
+    list(APPEND thirdparty_srcs
+        "lib/libwavpack/common_utils.c"
+        "lib/libwavpack/decorr_utils.c"
+        "lib/libwavpack/open_legacy.c"
+        "lib/libwavpack/read_words.c"
+        "lib/libwavpack/unpack.c"
+        "lib/libwavpack/unpack_utils.c"
+        "lib/libwavpack/unpack3_open.c"
+        "lib/libwavpack/entropy_utils.c"
+        "lib/libwavpack/open_raw.c"
+        "lib/libwavpack/tag_utils.c"
+        "lib/libwavpack/unpack_floats.c"
+        "lib/libwavpack/unpack3.c"
+        "lib/libwavpack/unpack3_seek.c"
+        "lib/libwavpack/open_filename.c"
+        "lib/libwavpack/open_utils.c"
+        "lib/libwavpack/tags.c"
+        "lib/libwavpack/unpack_seek.c"
+    )
 endif()
 
 # ---------------------------------------------------------------------------

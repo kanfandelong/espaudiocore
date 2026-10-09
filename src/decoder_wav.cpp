@@ -4,15 +4,8 @@
  */
 
 /**
- * @file    decoder_wav.c
+ * @file    decoder_wav.cpp
  * @brief   WAV (RIFF/WAVE) 解码器：支持 PCM 8/16/24/32-bit 与 IEEE float。
- *
- * 实现说明：
- *  - open() 用 peek 扫描头部（RIFF/chunks/data），**不移动数据源位置**，
- *    因此对不支持 seek 的 ringbuf 源同样可用。
- *  - decode() 按需读取 data chunk 的 PCM，做格式归一化后交给 AudioSink。
- *  - 输出位深**按源决定**：8/16-bit 走 16-bit 路径；24/32-bit PCM 与 IEEE
- *    float32 走 int32 路径（有效数据高位对齐），精度不丢。
  */
 
 #include "audio_port.h"
@@ -22,6 +15,8 @@
 #include <new>
 #include <stdlib.h>
 #include <string.h>
+
+#if defined(CONFIG_ESPAUDIOCORE_ENABLE_WAV)
 
 #define WAV_HEADER_SCAN_MAX 4096
 #define WAV_OUT_FRAMES      512 /**< 每次 decode 输出的立体声帧数 */
@@ -415,3 +410,18 @@ AudioDecoder *create_wav(void)
 {
     return new (std::nothrow) DecoderWav();
 }
+
+#else /* !CONFIG_ESPAUDIOCORE_ENABLE_WAV */
+
+bool probe_wav(AudioInput *in)
+{
+    (void)in;
+    return false;
+}
+
+AudioDecoder *create_wav(void)
+{
+    return nullptr;
+}
+
+#endif

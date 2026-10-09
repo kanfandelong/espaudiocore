@@ -9,6 +9,9 @@ menu "espaudiocore"
             esp_log_level_set("espaudiocore", ESP_LOG_INFO) 覆盖。
 
     menu "Decoders"
+        config ESPAUDIOCORE_ENABLE_WAVPACK
+            bool "WV OR WVC (WAVPACK)"
+            default y
 
         config ESPAUDIOCORE_ENABLE_WAV
             bool "WAV (PCM)"

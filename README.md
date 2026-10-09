@@ -9,7 +9,7 @@ ESP-IDF 原生的**多解码器统一封装库**：一次调用即开始播放�
 
 ## 特性
 
-- **6 种格式**：WAV / MP3 / AAC / FLAC / OGG Vorbis / Opus
+- **7 种格式**：WAV / MP3 / AAC / FLAC / OGG Vorbis / Opus / WavPack
 - **格式自动判定**：文件输入按「扩展名 → 魔数」两级路由，支持 ID3v2 前缀跳过
 - **两类输入**：本地文件（含挂载点的绝对路径）、ringbuf（网络流 / 上游解码器）
 - **两类输出**：I2S（库内部处理采样率变化）、ringbuf（应用自行取 PCM）
@@ -29,6 +29,7 @@ ESP-IDF 原生的**多解码器统一封装库**：一次调用即开始播放�
 | FLAC | `.flac` | libFLAC | ✅ | ✅ | 16/24-bit |
 | OGG Vorbis | `.ogg` | libvorbis + libogg | ✅ | ❌ | — |
 | Opus | `.opus` | libopus + opusfile | ✅ | ❌ | — |
+| WavPack | `.wv / .wvc` | libwavpack | ✅ | ✅ | 16/24、float32 |
 
 > ringbuf 不能用于 Vorbis / Opus：其封装库要求可 seek 的源，调用会返回
 > `ESP_ERR_NOT_SUPPORTED`，不会静默失败。
@@ -130,7 +131,7 @@ idf_component_register(SRCS "main.c"
 
 | 限制 | 说明 |
 | --- | --- |
-| ringbuf 输入不支持 Vorbis / Opus | 封装库要求可 seek，返回 `ESP_ERR_NOT_SUPPORTED` |
+| ringbuf 输入不支持 seek | 部分解码库可能无法在流式输入时正常工作 |
 | ringbuf 输入无法探测格式 | 必须显式传入编码格式 `espaudiocore_format_t` |
 | M4A 未实现 | `ESPAUDIOCORE_FMT_M4A` 枚举已保留，容器解析未实现 |
 | 同一时刻单会话 | 重复 `begin*()` 前应先 `stop()` |

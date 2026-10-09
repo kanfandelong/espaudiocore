@@ -65,6 +65,8 @@ class AudioInput {
 public:
     virtual ~AudioInput() = default;
 
+    const char *path = nullptr; /**< 文件源路径；非文件流保持 nullptr */
+
     virtual int     read(void *dst, size_t len) = 0;
     virtual int     peek(void *dst, size_t len, size_t need) = 0;
     virtual bool    can_seek() const = 0;

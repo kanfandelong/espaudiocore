@@ -29,12 +29,14 @@ AudioDecoder *create_aac(void);
 AudioDecoder *create_flac(void);
 AudioDecoder *create_vorbis(void);
 AudioDecoder *create_opus(void);
+AudioDecoder *create_wavpack(void);
 bool probe_wav(AudioInput *in);
 bool probe_mp3(AudioInput *in);
 bool probe_aac(AudioInput *in);
 bool probe_flac(AudioInput *in);
 bool probe_vorbis(AudioInput *in);
 bool probe_opus(AudioInput *in);
+bool probe_wavpack(AudioInput *in);
 
 /* 注意：OGG 容器要能区分 Vorbis / Opus，所以 probe_vorbis 必须排在 probe_opus 之前
  * （Vorbis 的探测会看第一页 payload 是否为 0x01"vorbis"，不是才让给 Opus）。 */
@@ -56,6 +58,9 @@ static const audio_decoder_entry_t g_decoders[] = {
 #endif
 #ifdef CONFIG_ESPAUDIOCORE_ENABLE_OPUS
     { "opus", "Opus", probe_opus, create_opus, 16384 },
+#endif
+#ifdef CONFIG_ESPAUDIOCORE_ENABLE_WAVPACK
+    { "wv", "WavPack", probe_wavpack, create_wavpack, 8192 },
 #endif
     /* 终止哨兵：ext == NULL */
     { NULL, NULL, NULL, NULL, 0 },
@@ -91,6 +96,9 @@ const audio_decoder_entry_t *audio_decoder_for_format(espaudiocore_format_t fmt)
         break;
     case ESPAUDIOCORE_FMT_M4A:
         ext = "m4a";
+        break;
+    case ESPAUDIOCORE_FMT_WAVPACK:
+        ext = "wv";
         break;
     default:
         return NULL;

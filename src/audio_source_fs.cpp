@@ -61,6 +61,16 @@ public:
             return false;
         }
 
+        size_t path_len = strlen(path);
+        path_copy_ = (char *)malloc(path_len + 1);
+        if (!path_copy_) {
+            fclose(fp_);
+            fp_ = nullptr;
+            return false;
+        }
+        memcpy(path_copy_, path, path_len + 1);
+        this->path = path_copy_;
+
 #if FS_USE_VFS
         /* 纯 VFS 模式：把 stdio 自己的缓冲指到 PSRAM，不做自管理窗口。
          * 必须在任何其它 I/O 之前设置。缓冲由我们 free，不借给 stdio 释放。 */
@@ -124,6 +134,11 @@ public:
             /* fclose 已完成，此时才能释放 setvbuf 的缓冲 */
             audio_free(vfs_buf_);
             vfs_buf_ = nullptr;
+        }
+        if (path_copy_) {
+            this->path = nullptr;
+            free(path_copy_);
+            path_copy_ = nullptr;
         }
         cap_ = len_ = pos_ = 0;
         consumed_ = 0;
@@ -346,6 +361,7 @@ private:
     }
 
     FILE   *fp_ = nullptr;
+    char   *path_copy_ = nullptr;
     uint8_t *buf_ = nullptr;       /**< WINDOW 模式：自管理窗口缓冲 */
     char   *vfs_buf_ = nullptr;    /**< VFS 模式：setvbuf 的缓冲（PSRAM 优先） */
     size_t  cap_ = 0;       /**< 窗口容量 */

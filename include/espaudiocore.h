@@ -123,6 +123,7 @@ typedef enum {
     ESPAUDIOCORE_FMT_VORBIS,
     ESPAUDIOCORE_FMT_OPUS,
     ESPAUDIOCORE_FMT_M4A,
+    ESPAUDIOCORE_FMT_WAVPACK,
 } espaudiocore_format_t;
 
 /* ===========================================================================
