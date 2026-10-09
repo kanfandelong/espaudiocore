@@ -196,11 +196,18 @@ public:
         return AUDIO_OK;
     }
 
+    audio_err_t seek_ms(int64_t ms) override
+    {
+        uint64_t sample = (uint64_t)ms * fmt_.rate / 1000ull;
+        return ov_pcm_seek(vf_, sample) == 0 ? AUDIO_OK : AUDIO_FAIL;
+    }
+
     void reset() override
     {
-        if (opened_ && vf_) {
-            (void)ov_raw_seek(vf_, 0);
-        }
+        /* seek 由库的api完成；这里不用做任何事） */
+        // if (opened_ && vf_) {
+        //     (void)ov_raw_seek(vf_, 0);
+        // }
         state_ = AUDIO_DEC_STATE_ACTIVE;
     }
 

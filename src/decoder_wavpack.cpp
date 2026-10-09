@@ -216,11 +216,18 @@ public:
 		return AUDIO_OK;
 	}
 
+    audio_err_t seek_ms(int64_t ms) override
+    {
+        uint64_t sample = (uint64_t)ms * fmt_.rate / 1000ull;
+        return WavpackSeekSample64(wpc_, sample) == true ? AUDIO_OK : AUDIO_FAIL;
+    }
+
 	void reset() override
 	{
-		if (wpc_ && in_ && in_->can_seek()) {
-			(void)WavpackSeekSample64(wpc_, 0);
-		}
+        /* seek 由库的api完成；这里不用做任何事） */
+		// if (wpc_ && in_ && in_->can_seek()) {
+		// 	(void)WavpackSeekSample64(wpc_, 0);
+		// }
 		state_ = AUDIO_DEC_STATE_ACTIVE;
 	}
 

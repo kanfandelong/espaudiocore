@@ -133,7 +133,7 @@ idf_component_register(SRCS "main.c"
 | --- | --- |
 | ringbuf 输入不支持 seek | 部分解码库可能无法在流式输入时正常工作 |
 | ringbuf 输入无法探测格式 | 必须显式传入编码格式 `espaudiocore_format_t` |
-| M4A 未实现 | `ESPAUDIOCORE_FMT_M4A` 枚举已保留，容器解析未实现 |
+| M4A 输入限制 | 文件模式支持 avpack + Helix AAC-LC；要求可 seek，不支持 ringbuf；需启用 AAC 解码器 |
 | 同一时刻单会话 | 重复 `begin*()` 前应先 `stop()` |
 
 ---

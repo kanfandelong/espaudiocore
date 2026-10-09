@@ -28,6 +28,11 @@ menu "espaudiocore"
             bool "AAC (libhelix-aac, 含 SBR)"
             default y
 
+        config ESPAUDIOCORE_ENABLE_M4A
+            bool "M4A (avpack + libhelix-aac)"
+            depends on ESPAUDIOCORE_ENABLE_AAC
+            default y
+
         config ESPAUDIOCORE_ENABLE_FLAC
             bool "FLAC (libflac)"
             default y

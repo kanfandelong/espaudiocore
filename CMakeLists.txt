@@ -30,8 +30,14 @@ set(srcs
     "src/decoder_flac.cpp"
     "src/decoder_vorbis.cpp"
     "src/decoder_opus.cpp"
+    "src/decoder_m4a.cpp"
     "src/decoder_wavpack.cpp"
 )
+
+if(CONFIG_ESPAUDIOCORE_ENABLE_M4A AND CONFIG_ESPAUDIOCORE_ENABLE_AAC)
+    set_source_files_properties("src/decoder_m4a.cpp" PROPERTIES
+        COMPILE_DEFINITIONS "FF_LITTLE_ENDIAN;FF_UNIX")
+endif()
 
 # ---------------------------------------------------------------------------
 # 第三方解码库（默认全部编译；可在 menuconfig 里按格式裁剪）
@@ -39,6 +45,13 @@ set(srcs
 set(thirdparty_srcs)
 set(thirdparty_incs)
 set(thirdparty_flags)
+
+list(APPEND thirdparty_incs "lib" "lib/avpack")
+list(APPEND thirdparty_incs "lib" "lib/ffbase")
+list(APPEND thirdparty_srcs
+    "lib/ffbase/str-format.c"
+    "lib/ffbase/sort.c"
+)
 
 if(CONFIG_ESPAUDIOCORE_ENABLE_MP3)
     list(APPEND thirdparty_srcs

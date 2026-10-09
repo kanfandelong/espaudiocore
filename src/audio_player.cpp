@@ -48,24 +48,27 @@
  * 会话上下文
  * =========================================================================*/
 
-struct PlayerCtx {
-    AudioInput   *in = nullptr;
-    AudioSink    *sink = nullptr;
+struct PlayerCtx
+{
+    AudioInput *in = nullptr;
+    AudioSink *sink = nullptr;
     AudioDecoder *dec = nullptr;
 
     espaudiocore_cfg_t cfg = {};
 
     int64_t duration_ms = -1;
-    bool    i2s_output = false; /**< true = 输出为 I2S（采样率由本库内部处理） */
-    int     dec_err = AUDIO_DEC_ERR_NONE;
+    bool i2s_output = false; /**< true = 输出为 I2S（采样率由本库内部处理） */
+    int dec_err = AUDIO_DEC_ERR_NONE;
 
-    TaskHandle_t      task = nullptr;
+    TaskHandle_t task = nullptr;
     SemaphoreHandle_t done_sem = nullptr;
 
-    volatile bool    stop_req = false;
-    volatile bool    pause_req = false;
-    volatile bool    seek_req = false;
+    volatile bool stop_req = false;
+    volatile bool pause_req = false;
+    volatile bool seek_req = false;
     volatile int64_t seek_target_ms = 0;
+    uint64_t seek_base_frames = 0;  /**< seek 瞬间 sink 累积写入的帧数快照 */
+    int64_t  seek_base_ms    = 0;   /**< seek 目标位置（毫秒） */
 
     /**
      * @brief 元数据回调包装：拦截 "tlen" 同步时长，再转发给用户回调。
@@ -79,13 +82,16 @@ struct PlayerCtx {
     {
         PlayerCtx *c = static_cast<PlayerCtx *>(user);
         if (c && meta && meta->type && meta->data &&
-            strcmp(meta->type, "tlen") == 0) {
+            strcmp(meta->type, "tlen") == 0)
+        {
             int64_t v = (int64_t)atoll(meta->data);
-            if (v > 0) {
+            if (v > 0)
+            {
                 c->duration_ms = v;
             }
         }
-        if (c && c->cfg.on_meta) {
+        if (c && c->cfg.on_meta)
+        {
             c->cfg.on_meta(c->cfg.user, meta);
         }
     }
@@ -99,27 +105,33 @@ static PlayerCtx *s_ctx = nullptr;
 
 static void ctx_destroy(PlayerCtx *c)
 {
-    if (!c) {
+    if (!c)
+    {
         return;
     }
-    if (c->dec) {
+    if (c->dec)
+    {
         c->dec->close();
         delete c->dec;
         c->dec = nullptr;
     }
-    if (c->sink) {
+    if (c->sink)
+    {
         delete c->sink;
         c->sink = nullptr;
     }
-    if (c->in) {
+    if (c->in)
+    {
         delete c->in;
         c->in = nullptr;
     }
-    if (c->done_sem) {
+    if (c->done_sem)
+    {
         vSemaphoreDelete(c->done_sem);
         c->done_sem = nullptr;
     }
-    if (s_ctx == c) {
+    if (s_ctx == c)
+    {
         s_ctx = nullptr;
     }
     delete c;
@@ -133,17 +145,22 @@ static void ctx_destroy(PlayerCtx *c)
  */
 static void ctx_stop_and_join(PlayerCtx *c)
 {
-    if (!c) {
+    if (!c)
+    {
         return;
     }
     c->stop_req = true;
     c->pause_req = false;
 
-    if (c->task) {
-        if (xSemaphoreTake(c->done_sem, pdMS_TO_TICKS(2000)) != pdTRUE) {
+    if (c->task)
+    {
+        if (xSemaphoreTake(c->done_sem, pdMS_TO_TICKS(2000)) != pdTRUE)
+        {
             AUDIO_LOGW("decode task did not exit in time; forcing delete (should not happen)");
             vTaskDelete(c->task);
-        } else {
+        }
+        else
+        {
             /* 拿到信号量说明解码任务已跑完主循环、不再访问任何共享资源；
              * 它紧接着会调用 vTaskDelete 自行消失，而 vTaskDelete 不碰我们的资源。
              *
@@ -172,35 +189,46 @@ static void decode_task(void *arg)
     bool eos = false;
     audio_err_t err = AUDIO_OK;
 
-    while (!c->stop_req) {
-        if (c->pause_req) {
+    while (!c->stop_req)
+    {
+        if (c->pause_req)
+        {
             vTaskDelay(pdMS_TO_TICKS(10));
             continue;
         }
 
-        if (c->seek_req) {
-            c->seek_req = false;
+        if (c->seek_req)
+        {
             int64_t target_ms = c->seek_target_ms;
 
-            if (!c->in->can_seek()) {
+            if (!c->in->can_seek())
+            {
                 AUDIO_LOGW("seek not supported by this source");
-            } else {
-                /* 用字节率把时间换算成偏移；解码器会在 reset() 后重新同步 */
-                const audio_format_t &f = c->dec->format();
-                int64_t byte_rate = (int64_t)f.rate * (f.channels ? f.channels : 2) * ((f.bits ? f.bits : 16) / 8);
-                if (byte_rate <= 0) {
-                    byte_rate = 176400; /* 兜底 44.1k/16bit/stereo */
-                }
-                int64_t off = (target_ms * byte_rate) / 1000;
-                if (c->in->seek(off, SEEK_SET) == AUDIO_OK) {
+            }
+            else
+            {
+                int seek_result = (int)c->dec->seek_ms(target_ms);
+                if (seek_result == AUDIO_OK)
+                {
+                    c->seek_base_frames = c->sink->played_frames();
+                    c->seek_base_ms     = target_ms;
                     c->dec->reset();
-                    if (c->cfg.on_event) {
+                    if (c->cfg.on_event)
+                    {
                         c->cfg.on_event(c->cfg.user, ESPAUDIOCORE_EVT_SEEKED, "seeked");
                     }
-                } else {
-                    AUDIO_LOGW("seek failed: %lld ms -> %lld bytes", (long long)target_ms, (long long)off);
+                }
+                else
+                {
+                    if (c->cfg.on_event)
+                    {
+                        c->cfg.on_event(c->cfg.user, ESPAUDIOCORE_EVT_ERROR, "seek error");
+                    }
+                    AUDIO_LOGW("seek failed: %lld ms (rc=%d)", (long long)target_ms,
+                               (int)seek_result);
                 }
             }
+            c->seek_req = false;
         }
 
         audio_err_t r = c->dec->decode();
@@ -208,31 +236,41 @@ static void decode_task(void *arg)
         /* 采样率/格式变化：I2S 输出时内部重配（D-9）；
          * ringbuf 输出时不碰硬件，只由 get_format() 报告给应用。 */
         const audio_format_t &f = c->dec->format();
-        if (c->sink && f.rate && c->sink->format_changed(f)) {
+        if (c->sink && f.rate && c->sink->format_changed(f))
+        {
             c->sink->set_rate(f.rate);
             c->sink->set_format(f.bits, f.channels);
         }
 
-        if (r == AUDIO_ERR_EOF) {
+        if (r == AUDIO_ERR_EOF)
+        {
             eos = true;
             break;
         }
-        if (r != AUDIO_OK) {
+        if (r != AUDIO_OK)
+        {
             err = r;
             break;
         }
     }
 
-    if (c->stop_req) {
+    if (c->stop_req)
+    {
         AUDIO_LOGI("decode loop stopped by request");
-    } else if (eos) {
+    }
+    else if (eos)
+    {
         AUDIO_LOGI("decode finished: end of stream");
-        if (c->cfg.on_event) {
+        if (c->cfg.on_event)
+        {
             c->cfg.on_event(c->cfg.user, ESPAUDIOCORE_EVT_EOS, "end of stream");
         }
-    } else {
+    }
+    else
+    {
         AUDIO_LOGE("decode failed: %s", audio_err_name(err));
-        if (c->cfg.on_event) {
+        if (c->cfg.on_event)
+        {
             char msg[64];
             snprintf(msg, sizeof(msg), "decode failed: %s", audio_err_name(err));
             c->cfg.on_event(c->cfg.user, ESPAUDIOCORE_EVT_ERROR, msg);
@@ -240,7 +278,8 @@ static void decode_task(void *arg)
     }
 
     /* 统一补一个 STOPPED，便于应用只用一个分支做收尾 */
-    if (c->cfg.on_event) {
+    if (c->cfg.on_event)
+    {
         c->cfg.on_event(c->cfg.user, ESPAUDIOCORE_EVT_STOPPED, "stopped");
     }
 
@@ -263,59 +302,73 @@ static void decode_task(void *arg)
 static esp_err_t player_begin(AudioInput *in, const audio_decoder_entry_t *entry, i2s_chan_handle_t tx,
                               void *out_rb, const espaudiocore_cfg_t *cfg, int *dec_err, bool i2s_output)
 {
-    if (!in) {
+    if (!in)
+    {
         return ESP_ERR_INVALID_ARG;
     }
-    if (dec_err) {
+    if (dec_err)
+    {
         *dec_err = AUDIO_DEC_ERR_NONE;
     }
-    if (!entry || !entry->create) {
+    if (!entry || !entry->create)
+    {
         delete in;
-        if (dec_err) {
+        if (dec_err)
+        {
             *dec_err = AUDIO_DEC_ERR_OPEN;
         }
         return ESP_ERR_NOT_SUPPORTED;
     }
 
     /* 一个进程只允许一个播放会话；重复 begin 先收尾旧的 */
-    if (s_ctx) {
+    if (s_ctx)
+    {
         ctx_stop_and_join(s_ctx);
     }
 
     PlayerCtx *c = new (std::nothrow) PlayerCtx();
-    if (!c) {
+    if (!c)
+    {
         delete in;
         return ESP_ERR_NO_MEM;
     }
-    if (cfg) {
+    if (cfg)
+    {
         c->cfg = *cfg;
     }
     c->in = in;
     c->i2s_output = i2s_output;
 
     c->done_sem = xSemaphoreCreateBinary();
-    if (!c->done_sem) {
+    if (!c->done_sem)
+    {
         ctx_destroy(c);
         return ESP_ERR_NO_MEM;
     }
 
     c->dec = entry->create();
-    if (!c->dec) {
+    if (!c->dec)
+    {
         ctx_destroy(c);
-        if (dec_err) {
+        if (dec_err)
+        {
             *dec_err = AUDIO_DEC_ERR_OPEN;
         }
         return ESP_ERR_NOT_SUPPORTED;
     }
 
     /* 输出汇：output_bits 由 cfg 指定（0 = 跟随 PCM 位宽） */
-    if (i2s_output) {
+    if (i2s_output)
+    {
         c->sink = audio_sink_i2s_create(tx, c->cfg.io_timeout_ms, c->cfg.output_bits);
-    } else {
+    }
+    else
+    {
         c->sink = audio_sink_ringbuf_create(reinterpret_cast<RingbufHandle_t>(out_rb),
                                             c->cfg.output_bits);
     }
-    if (!c->sink) {
+    if (!c->sink)
+    {
         ctx_destroy(c);
         return ESP_ERR_INVALID_STATE;
     }
@@ -328,16 +381,19 @@ static esp_err_t player_begin(AudioInput *in, const audio_decoder_entry_t *entry
     audio_format_t fmt = {};
     audio_err_t r = c->dec->open(c->in, c->sink, PlayerCtx::meta_trampoline, c, &fmt,
                                  &c->duration_ms, &c->dec_err);
-    if (r != AUDIO_OK) {
+    if (r != AUDIO_OK)
+    {
         esp_err_t e = audio_err_to_esp(r);
-        if (dec_err) {
+        if (dec_err)
+        {
             *dec_err = c->dec_err;
         }
         ctx_destroy(c);
         return e;
     }
     c->duration_ms = c->dec->format().rate ? c->duration_ms : c->duration_ms;
-    if (c->duration_ms == 0) {
+    if (c->duration_ms == 0)
+    {
         c->duration_ms = -1;
     }
 
@@ -346,14 +402,18 @@ static esp_err_t player_begin(AudioInput *in, const audio_decoder_entry_t *entry
     c->sink->set_format(c->dec->format().bits, c->dec->format().channels);
 
     /* 绑定停止标志：让 sink 的阻塞等待可被 stop 唤醒（D-14） */
-    if (i2s_output) {
+    if (i2s_output)
+    {
         audio_sink_i2s_bind_stop(c->sink, &c->stop_req);
-    } else {
+    }
+    else
+    {
         audio_sink_ringbuf_bind_stop(c->sink, &c->stop_req);
     }
 
     uint32_t stack = c->cfg.task_stack ? c->cfg.task_stack : entry->task_stack;
-    if (!stack) {
+    if (!stack)
+    {
         stack = CONFIG_ESPAUDIOCORE_TASK_STACK_DEFAULT;
     }
     int prio = c->cfg.task_priority ? c->cfg.task_priority : CONFIG_ESPAUDIOCORE_TASK_PRIORITY;
@@ -362,7 +422,8 @@ static esp_err_t player_begin(AudioInput *in, const audio_decoder_entry_t *entry
     s_ctx = c; /* 先发布，on_event(STARTED) 里可能回调查询状态 */
 
     BaseType_t ok = xTaskCreatePinnedToCore(decode_task, "espaudio_dec", stack, c, prio, &c->task, core);
-    if (ok != pdPASS) {
+    if (ok != pdPASS)
+    {
         AUDIO_LOGE("failed to create decode task (%u bytes stack, prio %d, core %d)", (unsigned)stack,
                    prio, core);
         ctx_destroy(c);
@@ -374,7 +435,8 @@ static esp_err_t player_begin(AudioInput *in, const audio_decoder_entry_t *entry
                entry->name, (unsigned)f.rate, (unsigned)f.channels, (unsigned)f.bits,
                (long long)c->duration_ms, (unsigned)stack, prio);
 
-    if (c->cfg.on_event) {
+    if (c->cfg.on_event)
+    {
         c->cfg.on_event(c->cfg.user, ESPAUDIOCORE_EVT_STARTED, "started");
     }
     return ESP_OK;
@@ -387,16 +449,19 @@ static esp_err_t player_begin(AudioInput *in, const audio_decoder_entry_t *entry
 esp_err_t audio_player_start_file(const char *path, i2s_chan_handle_t tx, void *out_rb,
                                   const espaudiocore_cfg_t *cfg, int *dec_err, bool i2s_output)
 {
-    if (dec_err) {
+    if (dec_err)
+    {
         *dec_err = AUDIO_DEC_ERR_NONE;
     }
-    if (!path || path[0] != '/') {
+    if (!path || path[0] != '/')
+    {
         AUDIO_LOGE("path must be absolute (include the mount point): %s", path ? path : "(null)");
         return ESP_ERR_INVALID_ARG;
     }
 
     AudioInput *in = audio_source_fs_create(path);
-    if (!in) {
+    if (!in)
+    {
         return ESP_ERR_NOT_FOUND;
     }
 
@@ -408,23 +473,28 @@ esp_err_t audio_player_start_stream(RingbufHandle_t in_rb, espaudiocore_format_t
                                     void *out_rb, const espaudiocore_cfg_t *cfg, int *dec_err,
                                     bool i2s_output)
 {
-    if (dec_err) {
+    if (dec_err)
+    {
         *dec_err = AUDIO_DEC_ERR_NONE;
     }
-    if (!in_rb) {
+    if (!in_rb)
+    {
         return ESP_ERR_INVALID_ARG;
     }
 
     AudioInput *in = audio_source_ringbuf_create(in_rb);
-    if (!in) {
+    if (!in)
+    {
         return ESP_ERR_NO_MEM;
     }
 
     /* ringbuf 源无法回退，所以不做探测：直接按调用者给的格式查表 */
     const audio_decoder_entry_t *entry = audio_decoder_for_format(fmt);
-    if (!entry) {
+    if (!entry)
+    {
         delete in;
-        if (dec_err) {
+        if (dec_err)
+        {
             *dec_err = AUDIO_DEC_ERR_OPEN;
         }
         return ESP_ERR_NOT_SUPPORTED;
@@ -435,7 +505,8 @@ esp_err_t audio_player_start_stream(RingbufHandle_t in_rb, espaudiocore_format_t
 
 esp_err_t audio_player_stop()
 {
-    if (!s_ctx) {
+    if (!s_ctx)
+    {
         return ESP_ERR_INVALID_STATE;
     }
     ctx_stop_and_join(s_ctx);
@@ -444,14 +515,17 @@ esp_err_t audio_player_stop()
 
 esp_err_t audio_player_pause()
 {
-    if (!s_ctx) {
+    if (!s_ctx)
+    {
         return ESP_ERR_INVALID_STATE;
     }
-    if (s_ctx->pause_req) {
+    if (s_ctx->pause_req)
+    {
         return ESP_OK;
     }
     s_ctx->pause_req = true;
-    if (s_ctx->cfg.on_event) {
+    if (s_ctx->cfg.on_event)
+    {
         s_ctx->cfg.on_event(s_ctx->cfg.user, ESPAUDIOCORE_EVT_PAUSED, "paused");
     }
     return ESP_OK;
@@ -459,14 +533,17 @@ esp_err_t audio_player_pause()
 
 esp_err_t audio_player_resume()
 {
-    if (!s_ctx) {
+    if (!s_ctx)
+    {
         return ESP_ERR_INVALID_STATE;
     }
-    if (!s_ctx->pause_req) {
+    if (!s_ctx->pause_req)
+    {
         return ESP_OK;
     }
     s_ctx->pause_req = false;
-    if (s_ctx->cfg.on_event) {
+    if (s_ctx->cfg.on_event)
+    {
         s_ctx->cfg.on_event(s_ctx->cfg.user, ESPAUDIOCORE_EVT_RESUMED, "resumed");
     }
     return ESP_OK;
@@ -474,13 +551,16 @@ esp_err_t audio_player_resume()
 
 esp_err_t audio_player_seek_ms(int64_t ms)
 {
-    if (!s_ctx) {
+    if (!s_ctx)
+    {
         return ESP_ERR_INVALID_STATE;
     }
-    if (ms < 0) {
+    if (ms < 0)
+    {
         return ESP_ERR_INVALID_ARG;
     }
-    if (!s_ctx->in->can_seek()) {
+    if (!s_ctx->in->can_seek())
+    {
         return ESP_ERR_NOT_SUPPORTED; /* ringbuf 源：无 seek */
     }
 
@@ -489,7 +569,8 @@ esp_err_t audio_player_seek_ms(int64_t ms)
     s_ctx->seek_req = true;
 
     /* 有界等待请求被消费，保证返回时位置已生效 */
-    for (int i = 0; i < 200 && s_ctx->seek_req; i++) {
+    for (int i = 0; i < 200 && s_ctx->seek_req; i++)
+    {
         vTaskDelay(pdMS_TO_TICKS(1));
     }
     return ESP_OK;
@@ -497,35 +578,39 @@ esp_err_t audio_player_seek_ms(int64_t ms)
 
 int64_t audio_player_get_position_ms()
 {
-    if (!s_ctx || !s_ctx->sink) {
-        return 0;
-    }
+    if (!s_ctx || !s_ctx->sink) return 0;
     AudioSink *sink = s_ctx->sink;
     uint32_t rate = sink->cur_rate;
-    if (!rate) {
-        return 0;
-    }
+    if (!rate) return 0;
 
-    /* 已写出的帧数，减去仍在 I2S DMA 队列里没播出的部分（见 D-10） */
-    uint64_t played = sink->played_frames();
-    uint8_t bytes_per_sample = sink->cur_bits ? (sink->cur_bits / 8) : 2;
-    uint8_t channels = sink->cur_channels ? sink->cur_channels : 2;
-    size_t frame_bytes = (size_t)bytes_per_sample * channels;
+    /* 自 seek 以来写入的帧数：总量 − 基准 */
+    uint64_t total = sink->played_frames();
+    uint64_t since_seek = (total >= s_ctx->seek_base_frames)
+                          ? (total - s_ctx->seek_base_frames) : 0;
+
+    /* 扣掉 DMA 里还没播出的（沿用 D-10 的算法） */
+    uint8_t bps = sink->cur_bits ? (sink->cur_bits / 8) : 2;
+    uint8_t ch  = sink->cur_channels ? sink->cur_channels : 2;
+    size_t frame_bytes = (size_t)bps * ch;
     if (frame_bytes) {
         size_t pending = audio_sink_pending_bytes(sink);
         uint64_t pending_frames = pending / frame_bytes;
-        if (pending_frames < played) {
-            played -= pending_frames;
+        if (pending_frames < since_seek) {
+            since_seek -= pending_frames;
         } else {
-            played = 0;
+            since_seek = 0;
         }
     }
-    return (int64_t)((played * 1000ull) / rate);
+
+    /* 位置 = seek 目标 + 自 seek 以来播出的时长 */
+    int64_t base_ms = s_ctx->seek_base_ms;
+    return base_ms + (int64_t)((since_seek * 1000ull) / rate);
 }
 
 esp_err_t audio_player_set_volume_db(float db)
 {
-    if (!s_ctx || !s_ctx->sink) {
+    if (!s_ctx || !s_ctx->sink)
+    {
         return ESP_ERR_INVALID_STATE;
     }
     s_ctx->sink->set_volume_db(db);
@@ -544,17 +629,21 @@ int64_t audio_player_get_duration_ms()
 
 esp_err_t audio_player_get_format(uint32_t *rate, uint8_t *channels, uint8_t *bits)
 {
-    if (!s_ctx || !s_ctx->dec) {
+    if (!s_ctx || !s_ctx->dec)
+    {
         return ESP_ERR_INVALID_STATE;
     }
     const audio_format_t &f = s_ctx->dec->format();
-    if (rate) {
+    if (rate)
+    {
         *rate = f.rate;
     }
-    if (channels) {
+    if (channels)
+    {
         *channels = f.channels;
     }
-    if (bits) {
+    if (bits)
+    {
         *bits = f.bits;
     }
     return ESP_OK;

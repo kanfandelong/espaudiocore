@@ -23,6 +23,8 @@ struct XingHeaderInfo {
     float    duration = 0;  /**< 总时长（秒） */
     int      sampleRate = 0;
     int      channels = 0;
+    bool     has_toc;         /* TOC 是否有效 */
+    uint8_t  toc[100];        /* 时长百分比 → 字节位置的索引表 */
 };
 
 /**

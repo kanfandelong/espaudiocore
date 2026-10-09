@@ -111,12 +111,12 @@ typedef enum {
     ESPAUDIOCORE_FMT_FLAC,
     ESPAUDIOCORE_FMT_VORBIS,
     ESPAUDIOCORE_FMT_OPUS,
-    ESPAUDIOCORE_FMT_M4A,      /* 枚举保留，但暂未实现 */
+    ESPAUDIOCORE_FMT_M4A,      /* M4A/MP4 容器中的 AAC-LC */
 } espaudiocore_format_t;
 ```
 
 **何时需要**：ringbuf 输入无法回退做魔数探测，必须由调用者显式给出。
-文件输入时会按「扩展名 → 魔数」自动判定，无需传。
+文件输入时会按「扩展名 → 魔数」自动判定，无需传。M4A 当前要求可 seek 的文件输入。
 
 ### 2.7 `espaudiocore_cfg_t` — 会话配置
 

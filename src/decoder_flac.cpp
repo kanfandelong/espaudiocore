@@ -191,13 +191,19 @@ public:
         return AUDIO_OK;
     }
 
+    audio_err_t seek_ms(int64_t ms) override
+    {
+        uint64_t sample = (uint64_t)ms * fmt_.rate / 1000ull;
+        return FLAC__stream_decoder_seek_absolute(dec_, sample) == true ? AUDIO_OK : AUDIO_FAIL;
+    }
+
     void reset() override
     {
-        /* seek 由调用者完成；这里复位解码器内部状态（保留已解析的元数据） */
-        if (dec_)
-        {
-            FLAC__stream_decoder_reset(dec_);
-        }
+        /* seek 由库的api完成；这里不用做任何事） */
+        // if (dec_)
+        // {
+        //     FLAC__stream_decoder_reset(dec_);
+        // }
         aborted_ = false;
         state_ = AUDIO_DEC_STATE_ACTIVE;
     }

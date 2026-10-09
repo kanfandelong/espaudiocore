@@ -28,7 +28,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-extern "C" {
+extern "C"
+{
 #include "mp3dec.h"
 }
 
@@ -40,7 +41,8 @@ extern "C" {
 /** int32 中间缓冲容量：每帧最多 1152 个立体声帧 = 2304 个采样点 */
 #define MP3_I32_CAP MP3_OUT_SAMPLES
 
-class DecoderMp3 : public AudioDecoder {
+class DecoderMp3 : public AudioDecoder
+{
 public:
     ~DecoderMp3() override
     {
@@ -50,35 +52,43 @@ public:
     audio_err_t open(AudioInput *in, AudioSink *out, espaudiocore_meta_cb_t meta_cb, void *meta_user,
                      audio_format_t *fmt, int64_t *duration_ms, int *dec_err) override
     {
-        in_  = in;
+        in_ = in;
         out_ = out;
-        meta_cb_   = meta_cb;
+        meta_cb_ = meta_cb;
         meta_user_ = meta_user;
-        if (dec_err) {
+        xi = {0};
+        if (dec_err)
+        {
             *dec_err = AUDIO_DEC_ERR_NONE;
         }
-        if (duration_ms) {
+        if (duration_ms)
+        {
             *duration_ms = -1;
         }
-        if (!in_ || !out_) {
+        if (!in_ || !out_)
+        {
             return AUDIO_ERR_INVALID_ARG;
         }
 
         h_ = MP3InitDecoder();
-        if (!h_) {
+        if (!h_)
+        {
             AUDIO_LOGE("MP3InitDecoder failed (out of memory)");
-            if (dec_err) {
+            if (dec_err)
+            {
                 *dec_err = AUDIO_DEC_ERR_OPEN;
             }
             return AUDIO_ERR_NO_MEM;
         }
 
-        buf_  = (uint8_t *)audio_alloc_big(MP3_IN_BUF, 0);
-        pcm_  = (int16_t *)audio_alloc_big(MP3_OUT_SAMPLES * sizeof(int16_t), 0);
+        buf_ = (uint8_t *)audio_alloc_big(MP3_IN_BUF, 0);
+        pcm_ = (int16_t *)audio_alloc_big(MP3_OUT_SAMPLES * sizeof(int16_t), 0);
         pcm32_ = (int32_t *)audio_alloc_big(MP3_OUT_SAMPLES * sizeof(int32_t), 0);
         xing_ = (uint8_t *)audio_alloc_big(2880, 0);
-        if (!buf_ || !pcm_ || !pcm32_ || !xing_) {
-            if (dec_err) {
+        if (!buf_ || !pcm_ || !pcm32_ || !xing_)
+        {
+            if (dec_err)
+            {
                 *dec_err = AUDIO_DEC_ERR_OPEN;
             }
             close();
@@ -91,11 +101,15 @@ public:
 
         /* 2) Xing/LAME 头 -> 精确时长（依赖可 seek 的源） */
         first_frame_pos_ = (uint32_t)in_->tell();
-        if (in_->can_seek()) {
+        if (in_->can_seek())
+        {
             int n = in_->read(xing_, 2880);
-            if (n > 4) {
-                XingHeaderInfo xi = parseXingHeader(xing_, (size_t)n);
-                if (xi.valid) {
+            if (n > 4)
+            {
+                xi = parseXingHeader(xing_, (size_t)n);
+                audio_free(xing_);
+                if (xi.valid)
+                {
                     duration_hint_ms_ = (int64_t)(xi.duration * 1000.0f);
                     AUDIO_LOGI("MP3 Xing: frames=%u bitrate=%u duration=%.2fs rate=%d ch=%d",
                                (unsigned)xi.frames, (unsigned)xi.bitrate, (double)xi.duration,
@@ -108,31 +122,38 @@ public:
         }
 
         /* 3) 先解一帧，拿到真实格式 */
-        if (!fill_valid_frame()) {
+        if (!fill_valid_frame())
+        {
             AUDIO_LOGW("MP3: no valid frame found");
-            if (dec_err) {
+            if (dec_err)
+            {
                 *dec_err = AUDIO_DEC_ERR_PARSE;
             }
             close();
             return AUDIO_ERR_PARSE;
         }
         audio_err_t r = decode_frame();
-        if (r != AUDIO_OK) {
-            if (dec_err) {
+        if (r != AUDIO_OK)
+        {
+            if (dec_err)
+            {
                 *dec_err = AUDIO_DEC_ERR_PARSE;
             }
             close();
             return AUDIO_ERR_PARSE;
         }
 
-        if (fmt) {
+        if (fmt)
+        {
             *fmt = fmt_;
         }
-        if (out_) {
+        if (out_)
+        {
             out_->set_rate(fmt_.rate);
             out_->set_format(fmt_.bits, fmt_.channels);
         }
-        if (duration_ms) {
+        if (duration_ms)
+        {
             *duration_ms = duration_hint_ms_;
         }
 
@@ -144,29 +165,36 @@ public:
 
     audio_err_t decode() override
     {
-        if (state_ != AUDIO_DEC_STATE_ACTIVE) {
+        if (state_ != AUDIO_DEC_STATE_ACTIVE)
+        {
             return AUDIO_ERR_EOF;
         }
 
         /* 尚有未写出的样本：整帧一次交给 sink（统一 int32 域，见 D-23） */
-        if (valid_samples_ > 0) {
+        if (valid_samples_ > 0)
+        {
             const size_t nsamp = (size_t)valid_samples_ * fmt_.channels;
-            if (nsamp > MP3_I32_CAP) {
+            if (nsamp > MP3_I32_CAP)
+            {
                 return AUDIO_ERR_IO;
             }
-            for (size_t i = 0; i < nsamp; i++) {
+            for (size_t i = 0; i < nsamp; i++)
+            {
                 pcm32_[i] = (int32_t)pcm_[i] << 16; /* int16 -> int32 高位对齐 */
             }
             int rc = out_->write_i32(pcm32_, valid_samples_, 16, 0);
             valid_samples_ = 0;
-            if (rc == AUDIO_ERR_NOT_SUPPORTED) {
+            if (rc == AUDIO_ERR_NOT_SUPPORTED)
+            {
                 rc = out_->write(pcm_, nsamp * sizeof(int16_t), 0);
             }
-            if (rc == AUDIO_ERR_NOT_SUPPORTED) {
+            if (rc == AUDIO_ERR_NOT_SUPPORTED)
+            {
                 state_ = AUDIO_DEC_STATE_EOS;
                 return AUDIO_ERR_EOF;
             }
-            if (rc != AUDIO_OK) {
+            if (rc != AUDIO_OK)
+            {
                 state_ = AUDIO_DEC_STATE_ERROR;
                 return (audio_err_t)rc;
             }
@@ -174,23 +202,86 @@ public:
         }
 
         /* 解下一帧 */
-        if (!fill_valid_frame()) {
+        if (!fill_valid_frame())
+        {
             state_ = AUDIO_DEC_STATE_EOS;
-            if (duration_hint_ms_ < 0 && !est_reported_) {
+            if (duration_hint_ms_ < 0 && !est_reported_)
+            {
                 est_reported_ = true;
                 report_duration(estimate_duration_ms());
             }
             return AUDIO_ERR_EOF;
         }
         audio_err_t r = decode_frame();
-        if (r == AUDIO_ERR_EOF) {
+        if (r == AUDIO_ERR_EOF)
+        {
             state_ = AUDIO_DEC_STATE_EOS;
             return r;
         }
-        if (r != AUDIO_OK) {
+        if (r != AUDIO_OK)
+        {
             /* 单帧坏数据：跳过，不终止整条流（与原实现一致） */
             return AUDIO_OK;
         }
+        return AUDIO_OK;
+    }
+
+    audio_err_t seek_ms(int64_t ms) override
+    {
+        if (!in_ || !in_->can_seek()) {
+            return AUDIO_ERR_NOT_SUPPORTED;
+        }
+        if (ms < 0) {
+            ms = 0;
+        }
+
+        int64_t abs_off = -1;
+
+        /* ---- 快路径：Xing/Info TOC（精度约 ±1% 时长，O(1)） ---- */
+        if (xi.valid && xi.has_toc &&
+            xi.bytes > 0 && duration_hint_ms_ > 0) {
+            int pct = (int)(ms * 100 / duration_hint_ms_);
+            if (pct < 0) {
+                pct = 0;
+            } else if (pct > 99) {
+                pct = 99;   /* TOC 只有 100 项，覆盖 0–99%，末尾 clamp */
+            }
+            /* toc[] 是 0–255 的粗定位，除以 256 归一化到 bytes 的分数；
+            * bytes 的基准是 Xing 帧本身，所以叠加 first_frame_pos_。 */
+            int64_t rel = (int64_t)xi.toc[pct] * (int64_t)xi.bytes / 256;
+            abs_off = (int64_t)first_frame_pos_ + rel;
+        }
+        /* ---- 中路径：平均码率估算（前 50 帧解出后才有值） ---- */
+        else if (avg_bitrate_ > 0) {
+            /* avg_bitrate_ 单位是 bps；ms → 秒 = /1000；秒 × bps / 8 = 字节数 */
+            int64_t bytes = (int64_t)((uint64_t)ms * avg_bitrate_ / 8000ull);
+            abs_off = (int64_t)first_frame_pos_ + bytes;
+        }
+        /* ---- 都没有：不做 PCM 字节率兜底（对 MP3 是错的，会跳到文件尾） ---- */
+        else {
+            AUDIO_LOGW("MP3 seek: no Xing TOC and no avg bitrate yet, giving up");
+            return AUDIO_ERR_NOT_SUPPORTED;
+        }
+
+        /* 边界 clamp */
+        int64_t sz = in_->size();
+        if (sz > 0 && abs_off >= sz) {
+            abs_off = sz - 1;
+        }
+        if (abs_off < 0) {
+            abs_off = 0;
+        }
+
+        if (in_->seek(abs_off, SEEK_SET) != AUDIO_OK) {
+            return AUDIO_ERR_IO;
+        }
+
+        /* 关键：丢弃内部缓冲，让下次 fill_valid_frame() 重新找同步字。
+        * TOC 给的落点不保证在帧边界上（典型偏 ±1% 时长），
+        * 必须靠 MP3FindSyncWord 在最近的帧头重新对齐。 */
+        // buff_valid_ = last_frame_end_ = valid_samples_ = 0;
+        // eof_ = false;
+
         return AUDIO_OK;
     }
 
@@ -206,7 +297,8 @@ public:
 
     void close() override
     {
-        if (h_) {
+        if (h_)
+        {
             MP3FreeDecoder(h_);
             h_ = nullptr;
         }
@@ -216,7 +308,8 @@ public:
         pcm_ = nullptr;
         audio_free(pcm32_);
         pcm32_ = nullptr;
-        audio_free(xing_);
+        if (xing_)
+            audio_free(xing_);
         xing_ = nullptr;
         buff_valid_ = last_frame_end_ = valid_samples_ = 0;
         state_ = AUDIO_DEC_STATE_IDLE;
@@ -225,24 +318,26 @@ public:
 private:
     void report_duration(int64_t ms)
     {
-        if (ms < 0 || !meta_cb_) {
+        if (ms < 0 || !meta_cb_)
+        {
             return;
         }
         char buf[24];
         snprintf(buf, sizeof(buf), "%lld", (long long)ms);
         espaudiocore_meta_t m = {};
-        m.type      = "tlen"; /* 与原实现一致的长度元数据 key */
+        m.type = "tlen"; /* 与原实现一致的长度元数据 key */
         m.is_binary = false;
-        m.data      = buf;
-        m.len       = strlen(buf);
-        m.pic_type  = -1;
+        m.data = buf;
+        m.len = strlen(buf);
+        m.pic_type = -1;
         meta_cb_(meta_user_, &m);
     }
 
     /** 用已解码帧数估算总时长（无 Xing 头时的兜底，逻辑同原实现） */
     int64_t estimate_duration_ms()
     {
-        if (bitrate_count_ < 50 || avg_bitrate_ == 0 || file_size_ == 0) {
+        if (bitrate_count_ < 50 || avg_bitrate_ == 0 || file_size_ == 0)
+        {
             return -1;
         }
         uint64_t total_bytes = (file_size_ > first_frame_pos_) ? (file_size_ - first_frame_pos_) : 0;
@@ -258,25 +353,33 @@ private:
     {
         buf_[0] = 0; /* 破坏上次残留的同步字，避免误判 */
         int next_sync;
-        do {
+        do
+        {
             next_sync = MP3FindSyncWord(buf_ + last_frame_end_, (int)buff_valid_ - last_frame_end_);
-            if (next_sync >= 0) {
+            if (next_sync >= 0)
+            {
                 next_sync += last_frame_end_;
             }
             last_frame_end_ = 0;
-            if (next_sync == -1) {
-                if (buff_valid_ > 0 && buf_[buff_valid_ - 1] == 0xff) {
+            if (next_sync == -1)
+            {
+                if (buff_valid_ > 0 && buf_[buff_valid_ - 1] == 0xff)
+                {
                     /* 可能是同步字的前半，保留它 */
                     buf_[0] = 0xff;
                     int n = in_->read(buf_ + 1, MP3_IN_BUF - 1);
                     buff_valid_ = (n > 0) ? (int16_t)(n + 1) : 0;
-                    if (buff_valid_ <= 1) {
+                    if (buff_valid_ <= 1)
+                    {
                         return false; /* EOF */
                     }
-                } else {
+                }
+                else
+                {
                     int n = in_->read(buf_, MP3_IN_BUF);
                     buff_valid_ = (n > 0) ? (int16_t)n : 0;
-                    if (buff_valid_ == 0) {
+                    if (buff_valid_ == 0)
+                    {
                         return false; /* EOF */
                     }
                 }
@@ -288,9 +391,11 @@ private:
         memmove(buf_, buf_ + next_sync, (size_t)buff_valid_);
 
         /* 尽量把缓冲补满 */
-        if (buff_valid_ < MP3_IN_BUF) {
+        if (buff_valid_ < MP3_IN_BUF)
+        {
             int n = in_->read(buf_ + buff_valid_, MP3_IN_BUF - buff_valid_);
-            if (n > 0) {
+            if (n > 0)
+            {
                 buff_valid_ = (int16_t)(buff_valid_ + n);
             }
         }
@@ -304,7 +409,8 @@ private:
         int bytes_left = buff_valid_;
         int ret = MP3Decode(h_, &in_buff, &bytes_left, pcm_, 0);
 
-        if (ret) {
+        if (ret)
+        {
             AUDIO_LOGD("MP3 decode error %d (skipped)", ret);
             return AUDIO_ERR_DECODE;
         }
@@ -313,21 +419,27 @@ private:
 
         MP3FrameInfo fi;
         MP3GetLastFrameInfo(h_, &fi);
-        if (fi.outputSamps <= 0 || fi.nChans <= 0 || fi.samprate <= 0) {
+        if (fi.outputSamps <= 0 || fi.nChans <= 0 || fi.samprate <= 0)
+        {
             return AUDIO_ERR_DECODE;
         }
 
-        if ((uint32_t)fi.samprate != fmt_.rate) {
+        if ((uint32_t)fi.samprate != fmt_.rate)
+        {
             fmt_.rate = (uint32_t)fi.samprate;
             fmt_.bits = 16;
             fmt_.channels = (uint8_t)fi.nChans;
-            if (out_) {
+            if (out_)
+            {
                 out_->set_rate(fmt_.rate);
                 out_->set_format(fmt_.bits, fmt_.channels);
             }
-        } else if ((uint8_t)fi.nChans != fmt_.channels) {
+        }
+        else if ((uint8_t)fi.nChans != fmt_.channels)
+        {
             fmt_.channels = (uint8_t)fi.nChans;
-            if (out_) {
+            if (out_)
+            {
                 out_->set_format(fmt_.bits, fmt_.channels);
             }
         }
@@ -335,10 +447,12 @@ private:
         valid_samples_ = (int16_t)(fi.outputSamps / fmt_.channels);
 
         /* 比特率累加 -> 时长估算（逻辑同原实现，但只上报一次，避免刷屏） */
-        if (duration_hint_ms_ < 0 && !est_reported_ && fi.bitrate > 0) {
+        if (duration_hint_ms_ < 0 && !est_reported_ && fi.bitrate > 0)
+        {
             bitrate_sum_ += (uint64_t)fi.bitrate * 1000ull;
             bitrate_count_++;
-            if (bitrate_count_ >= 50) {
+            if (bitrate_count_ >= 50)
+            {
                 avg_bitrate_ = bitrate_sum_ / bitrate_count_;
                 est_reported_ = true;
                 report_duration(estimate_duration_ms());
@@ -347,57 +461,65 @@ private:
         return AUDIO_OK;
     }
 
-    AudioInput   *in_ = nullptr;
-    AudioSink    *out_ = nullptr;
-    HMP3Decoder   h_ = nullptr;
-    uint8_t      *buf_ = nullptr;
-    int16_t      *pcm_ = nullptr;
-    int32_t      *pcm32_ = nullptr; /**< 统一 int32 域中间缓冲 */
-    uint8_t      *xing_ = nullptr;
+    AudioInput *in_ = nullptr;
+    AudioSink *out_ = nullptr;
+    HMP3Decoder h_ = nullptr;
+    uint8_t *buf_ = nullptr;
+    int16_t *pcm_ = nullptr;
+    int32_t *pcm32_ = nullptr; /**< 统一 int32 域中间缓冲 */
+    uint8_t *xing_ = nullptr;
 
     espaudiocore_meta_cb_t meta_cb_ = nullptr;
-    void                  *meta_user_ = nullptr;
+    void *meta_user_ = nullptr;
 
-    int16_t  buff_valid_ = 0;
-    int16_t  last_frame_end_ = 0;
-    int16_t  valid_samples_ = 0;
-    bool     eof_ = false;
-    bool     first_sync_done_ = false;
+    XingHeaderInfo xi = {0};
 
-    size_t   id3_bytes_ = 0;
+    int16_t buff_valid_ = 0;
+    int16_t last_frame_end_ = 0;
+    int16_t valid_samples_ = 0;
+    bool eof_ = false;
+    bool first_sync_done_ = false;
+
+    size_t id3_bytes_ = 0;
     uint32_t first_frame_pos_ = 0;
     uint32_t file_size_ = 0; /* 由 player 在 open 前设置不了，估时长用 tell/size */
-    int64_t  duration_hint_ms_ = -1;
+    int64_t duration_hint_ms_ = -1;
 
     uint64_t bitrate_sum_ = 0;
     uint32_t bitrate_count_ = 0;
     uint64_t avg_bitrate_ = 0;
-    bool     est_reported_ = false; /**< 时长估算是否已上报 */
+    bool est_reported_ = false; /**< 时长估算是否已上报 */
 };
 
 /** 魔数探测：MP3 无固定魔数，靠帧同步字 + 字段合法性交叉验证 */
 bool probe_mp3(AudioInput *in)
 {
     uint8_t h[16];
-    if (!in) {
+    if (!in)
+    {
         return false;
     }
     int got = in->peek(h, sizeof(h), 10);
-    if (got < 10) {
+    if (got < 10)
+    {
         return false;
     }
-    if (memcmp(h, "ID3", 3) == 0) {
+    if (memcmp(h, "ID3", 3) == 0)
+    {
         return true;
     }
-    for (int i = 0; i + 4 <= got; i++) {
-        if (h[i] != 0xFF || (h[i + 1] & 0xE0) != 0xE0) {
+    for (int i = 0; i + 4 <= got; i++)
+    {
+        if (h[i] != 0xFF || (h[i + 1] & 0xE0) != 0xE0)
+        {
             continue;
         }
         uint8_t ver = (h[i + 1] >> 3) & 0x03;
         uint8_t layer = (h[i + 1] >> 1) & 0x03;
         uint8_t br = (h[i + 2] >> 4) & 0x0F;
         uint8_t sr = (h[i + 2] >> 2) & 0x03;
-        if (ver != 1 && layer != 0 && br != 0 && br != 15 && sr != 3) {
+        if (ver != 1 && layer != 0 && br != 0 && br != 15 && sr != 3)
+        {
             return true;
         }
     }

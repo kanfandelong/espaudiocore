@@ -235,10 +235,43 @@ public:
         return AUDIO_OK;
     }
 
+    audio_err_t seek_ms(int64_t ms) override
+    {
+        if (!in_ || !in_->can_seek()) return AUDIO_ERR_NOT_SUPPORTED;
+        if (ms < 0) ms = 0;
+        if (bytes_per_frame_in_ == 0) return AUDIO_ERR_IO;
+
+        // 还没开始解码：先补跳 header，让 cur_pos 落到 data 起点
+        if (data_skip_ > 0) {
+            if (in_->seek(data_skip_, SEEK_CUR) != AUDIO_OK) return AUDIO_ERR_IO;
+            data_skip_ = 0;
+        }
+
+        // 目标帧数（clamp 到 [0, 总帧数]）
+        int64_t total_frames = data_bytes_ / bytes_per_frame_in_;
+        int64_t target_frame = (int64_t)ms * rate_ / 1000;
+        if (target_frame < 0) target_frame = 0;
+        if (target_frame > total_frames) target_frame = total_frames;
+
+        // 已播放字节数（等价于已播放帧数 × bytes_per_frame_in_）
+        uint32_t played_bytes = data_bytes_ - data_left_;
+        int64_t  cur_pos      = in_->tell();
+        if (cur_pos < 0) return AUDIO_ERR_IO;
+
+        // 相对定位：cur_pos + (目标字节 − 已播放字节)
+        int64_t target_bytes = target_frame * bytes_per_frame_in_;
+        int64_t target_pos   = cur_pos + target_bytes - (int64_t)played_bytes;
+        if (target_pos < 0) target_pos = 0;   // 理论不会触发，双保险
+
+        if (in_->seek(target_pos, SEEK_SET) != AUDIO_OK) return AUDIO_ERR_IO;
+
+        data_left_ = data_bytes_ - (uint32_t)target_bytes;
+        return AUDIO_OK;
+    }
+
     void reset() override
     {
-        /* data_skip_ 只在首次生效；seek 由调用者负责，这里只复位统计 */
-        data_left_ = data_bytes_;
+        // 位置与 data_left_ 由 seek_ms() 全权负责；这里不做任何事。
     }
 
     void close() override

@@ -70,6 +70,15 @@ public:
      */
     virtual audio_err_t decode() = 0;
 
+    /**
+     * @brief 按播放时间 seek。容器解码器可覆盖；默认交由播放器做字节率 seek。
+     */
+    virtual audio_err_t seek_ms(int64_t ms)
+    {
+        (void)ms;
+        return AUDIO_ERR_NOT_SUPPORTED;
+    }
+
     /** seek 之后复位内部状态（清空解码器缓存、丢弃半帧） */
     virtual void reset() = 0;
 
