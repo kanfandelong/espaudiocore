@@ -14,8 +14,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(CONFIG_ESPAUDIOCORE_DEBUG_DIAGNOSTICS)
 static uint32_t s_psram_dma_miss = 0;
 static uint32_t s_psram_miss = 0;
+#endif
 
 void *audio_alloc_big(size_t size, size_t align)
 {
@@ -31,7 +33,9 @@ void *audio_alloc_big(size_t size, size_t align)
     if (p) {
         return p;
     }
+#if defined(CONFIG_ESPAUDIOCORE_DEBUG_DIAGNOSTICS)
     s_psram_dma_miss++;
+#endif
 
     /* 第二优先：纯 PSRAM。非 DMA 的 PSRAM 交给 SDMMC 这类驱动时，
      * 驱动会自己分配临时 DMA 缓冲并拷贝，功能与完整性都有保障。 */
@@ -39,7 +43,9 @@ void *audio_alloc_big(size_t size, size_t align)
     if (p) {
         return p;
     }
+#if defined(CONFIG_ESPAUDIOCORE_DEBUG_DIAGNOSTICS)
     s_psram_miss++;
+#endif
 
 #if !CONFIG_ESPAUDIOCORE_PSRAM_REQUIRED
     /* 最后兜底：内部 RAM。仅在未强制要求 PSRAM 时启用。 */
@@ -66,6 +72,7 @@ void audio_free(void *p)
     }
 }
 
+#if defined(CONFIG_ESPAUDIOCORE_DEBUG_DIAGNOSTICS)
 uint32_t audio_alloc_psram_dma_miss_count(void)
 {
     return s_psram_dma_miss;
@@ -75,6 +82,7 @@ uint32_t audio_alloc_psram_miss_count(void)
 {
     return s_psram_miss;
 }
+#endif
 
 esp_err_t audio_err_to_esp(int audio_err)
 {

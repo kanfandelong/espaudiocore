@@ -1,5 +1,11 @@
 menu "espaudiocore"
 
+    config ESPAUDIOCORE_DEBUG_DIAGNOSTICS
+        bool "Enable diagnostic helpers"
+        default n
+        help
+            调试代码控制。
+
     config ESPAUDIOCORE_LOG_LEVEL
         int "Log level (0=NONE 1=ERROR 2=WARN 3=INFO 4=DEBUG 5=VERBOSE)"
         range 0 5

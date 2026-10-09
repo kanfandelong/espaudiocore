@@ -16,6 +16,7 @@
 #include "esp_err.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "sdkconfig.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -56,8 +57,10 @@ void *audio_alloc_dma(size_t size);
 
 void audio_free(void *p);
 
-/** @brief 大块缓冲申请的降级统计，用于诊断（返回尝试 PSRAM+DMA 失败的次数） */
+/** @brief 诊断：返回尝试 PSRAM+DMA 失败的次数。 */
+#if defined(CONFIG_ESPAUDIOCORE_DEBUG_DIAGNOSTICS)
 uint32_t audio_alloc_psram_dma_miss_count(void);
+#endif
 
 /* ===========================================================================
  * 错误转换
