@@ -161,12 +161,11 @@ typedef struct {
 /**
  * @brief 打开本地文件并**立即开始**播放（内部起解码任务，不等播放结束）。
  *
- * @param path     绝对路径，如 "/sdcard/a.mp3"。**必须包含挂载点**，
- *                 不接受 Arduino 风格的相对路径。本库不做挂载动作，
- *                 挂载由应用负责。路径不以 '/' 开头时返回 ESP_ERR_INVALID_ARG。
- * @param tx       已 init_std_mode + enable 的 I2S TX 通道。所有权归应用，
- *                 本库只写入数据，并在采样率变化时重配其时钟（输出为 I2S 时）。
- * @param cfg      可为 NULL（全用默认值）
+ * @param path     绝对路径，如 "/sdcard/a.mp3"。**必须包含挂载点**，路径不合 
+ *                 法时返回 ESP_ERR_INVALID_ARG。
+ * @param tx       已 init_std_mode + enable 的 I2S TX 通道。生命周期由应用，
+ *                 管理。
+ * @param cfg      传入NULL时回退到默认值
  * @param dec_err  [out] 解码器原生错误码；仅解码阶段失败时有效，可传 NULL。
  *                 调用者可据此区分"格式不支持"与"文件损坏"。
  *
@@ -185,14 +184,12 @@ esp_err_t espaudiocore_begin(const char *path, i2s_chan_handle_t tx, const espau
 /**
  * @brief 打开本地文件，把**解码后的 PCM 写进 ringbuf**（不碰任何硬件）。
  *
- * 与 espaudiocore_begin() 的唯一区别是输出端：这里写 ringbuf，由应用自行
- * 取走（落盘、再送 I2S、推流等）。
+ * 与 espaudiocore_begin() 的唯一区别是输出端：这里写 ringbuf，由应用处理解码后的pcm。
  *
  * @param path 绝对路径（含挂载点），同 espaudiocore_begin()
- * @param out  输出 PCM 的 ringbuf，所有权归调用者
+ * @param out  输出 PCM 的 ringbuf，生命周期由应用层管理
  *
- * @note 输出为 ringbuf 时，采样率**不由本库重配**，而是通过
- *       espaudiocore_get_format() 上报，由应用自行处理（设计 D-9）。
+ * @note 应用层应采样率通过espaudiocore_get_format()获取yingbuff中的pcm格式信息。
  */
 esp_err_t espaudiocore_begin_rb(const char *path, RingbufHandle_t out,
                                 const espaudiocore_cfg_t *cfg, int *dec_err);
@@ -203,13 +200,14 @@ esp_err_t espaudiocore_begin_rb(const char *path, RingbufHandle_t out,
  * ringbuf 源是**纯顺序流**：不支持 seek，也不做格式探测，
  * 因此格式必须由调用者显式给出。
  *
- * @param in  输入 ringbuf（压缩/编码数据），所有权归调用者
- * @param fmt 显式指定解码格式
+ * @param in  输入 ringbuf（压缩/编码数据），生命周期由应用层管理
+ * @param fmt 显式指定的解码格式
  * @param tx  已 init_std_mode + enable 的 I2S TX 通道
  *
  * @note 该模式下以下能力返回 ESP_ERR_NOT_SUPPORTED：
  *       - espaudiocore_seek_ms()
  *       - 依赖 seek 的时长估算（get_duration_ms() 可能返回 <0）
+ *       - 后续计划使用专用回调来通知应用层的数据源进行seek操作
  */
 esp_err_t espaudiocore_begin_stream(RingbufHandle_t in, espaudiocore_format_t fmt,
                                     i2s_chan_handle_t tx, const espaudiocore_cfg_t *cfg,
@@ -218,19 +216,15 @@ esp_err_t espaudiocore_begin_stream(RingbufHandle_t in, espaudiocore_format_t fm
 /**
  * @brief **两端都是 ringbuf** 的流式会话：输入压缩数据、输出 PCM。
  *
- * 适合"完整流式管道"这类拓扑——上游任务喂压缩数据、下游任务取 PCM，
- * 中间只经过本库解码，全程不触碰硬件：
+ *     适合流式管道解码
  *
  *     任务A ──(压缩)──> in ringbuf ──> 本库解码 ──> out ringbuf ──> 任务B
  *
- * 与 espaudiocore_begin_stream() 相比，输出端不再伪装成 i2s_chan_handle_t，
- * 类型自解释，也不会误把 ringbuf 当 I2S 通道使用。
- *
  * @param in  输入 ringbuf（压缩数据）
- * @param fmt 显式指定解码格式（ringbuf 无法回退探测）
+ * @param fmt 显式的指定解码格式
  * @param out 输出 ringbuf（PCM）
  *
- * @note 采样率通过 espaudiocore_get_format() 上报，由应用自行处理（D-9）。
+ * @note 应用层应采样率通过espaudiocore_get_format()获取yingbuff中的pcm格式信息。
  */
 esp_err_t espaudiocore_begin_stream_rb(RingbufHandle_t in, espaudiocore_format_t fmt,
                                        RingbufHandle_t out, const espaudiocore_cfg_t *cfg,
@@ -250,7 +244,6 @@ esp_err_t espaudiocore_stop(void);
  * @note 输出为 I2S 时，DMA 队列内的残留数据会继续播完，所以有
  *       dma_desc_num * dma_frame_num / sample_rate 的余音，该值由应用
  *       创建 I2S 通道时的 DMA 配置决定。需要更快的暂停响应就减小队列深度。
- *       本接口不会调用 i2s_channel_disable()（那会产生爆音）。
  */
 esp_err_t espaudiocore_pause(void);
 
@@ -260,26 +253,15 @@ esp_err_t espaudiocore_resume(void);
 /**
  * @brief 跳转到指定位置。**阻塞**至跳转真正生效。
  *
- * 跳转在解码任务内串行执行（seek 源 → 复位解码器 → 继续解码），
- * 不能在应用层直接对源 seek，否则解码器内部状态会与文件位置错配。
- *
  * @param ms 目标位置（毫秒）
  * @return ESP_ERR_NOT_SUPPORTED（ringbuf 输入）/ ESP_ERR_NOT_RUNNING / ESP_OK
  */
 esp_err_t espaudiocore_seek_ms(int64_t ms);
 
 /**
- * @brief 设置输出音量（dB）。0 dB = 原始幅度，不改变电平。
+ * @brief 设置输出音量（dB）
  *
- * @param db 增益，单位 dB。建议范围 -60..+6；-60 及以下视为静音。
- *           正值放大（可能削顶饱和），负值衰减。
- *
- * @note 音量在输出汇的写入路径上做整数缩放（在 int32 域完成，带饱和处理），
- *       I2S 与 ringbuf 两种输出**语义一致**：
- *        - 增益为 0 dB 时不做任何乘加，直接写入（零额外开销）；
- *        - 正值放大，超过满量程会饱和削顶；负值衰减。
- *       可在播放中随时调用，立即生效，无需重开。
- *       若下游需要**未缩放**的原始 PCM，把音量保持 0 dB 即可。
+ * @param db 增益，单位 dB。
  */
 esp_err_t espaudiocore_set_volume_db(float db);
 

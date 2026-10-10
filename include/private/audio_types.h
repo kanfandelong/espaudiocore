@@ -293,12 +293,12 @@ public:
     /** dB -> Q16 线性增益。<= -60 dB 视为静音（返回 0）。 */
     static uint32_t db_to_gain_q16(float db)
     {
-        if (db <= -60.0f) {
+/*         if (db <= -60.0f) {
             return 0;
         }
         if (db > 12.0f) {
             db = 12.0f;
-        }
+        } */
         float linear = powf(10.0f, db / 20.0f);
         uint32_t g = (uint32_t)(linear * 65536.0f + 0.5f);
         return g;
