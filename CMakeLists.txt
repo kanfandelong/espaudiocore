@@ -46,12 +46,14 @@ set(thirdparty_srcs)
 set(thirdparty_incs)
 set(thirdparty_flags)
 
-list(APPEND thirdparty_incs "lib" "lib/avpack")
-list(APPEND thirdparty_incs "lib" "lib/ffbase")
-list(APPEND thirdparty_srcs
-    "lib/ffbase/str-format.c"
-    "lib/ffbase/sort.c"
-)
+if (CONFIG_ESPAUDIOCORE_ENABLE_M4A)
+    list(APPEND thirdparty_incs "lib" "lib/avpack")
+    list(APPEND thirdparty_incs "lib" "lib/ffbase")
+    list(APPEND thirdparty_srcs
+        "lib/ffbase/str-format.c"
+        "lib/ffbase/sort.c"
+    )
+endif()
 
 if(CONFIG_ESPAUDIOCORE_ENABLE_MP3)
     list(APPEND thirdparty_srcs

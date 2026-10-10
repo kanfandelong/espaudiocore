@@ -15,14 +15,11 @@
 #include "audio_sink.h"
 #include "audio_types.h"
 
+#include <math.h>
 #include <new>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#if defined(CONFIG_ESPAUDIOCORE_DEBUG_DIAGNOSTICS)
-#include <math.h>
-#include <stdio.h>
-#endif
 
 #include "driver/i2s_std.h"
 #include "freertos/FreeRTOS.h"
@@ -43,13 +40,11 @@ public:
 
     ~AudioSinkI2s() override
     {
-#if defined(CONFIG_ESPAUDIOCORE_DEBUG_DIAGNOSTICS)
         stat_dump();
         if (dump_) {
             fclose(dump_);
             dump_ = nullptr;
         }
-#endif
         if (lock_) {
             vSemaphoreDelete(lock_);
             lock_ = nullptr;
@@ -67,14 +62,14 @@ public:
         if (!tx_ || !lock_) {
             return false;
         }
-#if defined(CONFIG_ESPAUDIOCORE_DEBUG_DIAGNOSTICS)
+        /* 诊断 dump：把真实送去 I2S 的字节落盘，用电脑端工具精确比对。
+         * 统计数字已经不足以定位，必须看原始样本。 */
         if (!dump_) {
             dump_ = fopen("/sdcard/i2s_dump.pcm", "wb");
             if (dump_) {
                 AUDIO_LOGW("diagnostic dump enabled -> /sdcard/i2s_dump.pcm");
             }
         }
-#endif
 
         /* 转换缓冲放堆/PSRAM，不放在对象里：三块合计几十 KB，
          * 放对象内会让每次 new AudioSinkI2s 都吃掉一大块堆。 */
@@ -422,10 +417,8 @@ public:
         if (!tx_) {
             return AUDIO_ERR_INVALID_ARG;
         }
-        /* 新格式开始时输出上一段的诊断统计。 */
-#if defined(CONFIG_ESPAUDIOCORE_DEBUG_DIAGNOSTICS)
+        /* 新格式开始：先把上一段的形状统计打出来（每个文件一条，不刷屏） */
         stat_dump();
-#endif
 
         /* 硬件槽宽在强制目标位宽时使用目标位宽，否则跟随源位宽。
          * 注意 cur_bits 记录的是**源**位宽（解码器输出），这样才能在 write()
@@ -523,7 +516,6 @@ public:
     }
 
 private:
-#if defined(CONFIG_ESPAUDIOCORE_DEBUG_DIAGNOSTICS)
     /**
      * @brief 输出"送去 I2S 的字节"的形状统计。
      *
@@ -575,7 +567,6 @@ private:
         stat_min_neg_ = 0;
         memset(stat_hist_, 0, sizeof(stat_hist_));
     }
-#endif
 
     i2s_chan_handle_t      tx_ = nullptr;
     SemaphoreHandle_t      lock_ = nullptr;
@@ -588,7 +579,6 @@ private:
     /** 一轮写能处理的样本数上限；三块缓冲都按它分配 */
     static const size_t CONV_SAMPLES = 8192;
 
-#if defined(CONFIG_ESPAUDIOCORE_DEBUG_DIAGNOSTICS)
     /** 32-bit 满量程（int32 范围内） */
     static const int64_t FT_FULL = 2147483647LL;
 
@@ -609,7 +599,6 @@ private:
 
     FILE    *dump_ = nullptr;    /**< 诊断 dump 文件 */
     int      dump_n_ = 0;
-#endif
 
     int32_t *buf_a_ = nullptr; /**< 音量路径的 packed 32-bit 中间缓冲 */
     uint8_t *buf_b_ = nullptr; /**< 位宽转换输出缓冲（字节寻址，兼容 24-bit） */

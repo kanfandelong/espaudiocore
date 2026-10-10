@@ -20,12 +20,12 @@
 
 #if defined(CONFIG_ESPAUDIOCORE_ENABLE_M4A) && defined(CONFIG_ESPAUDIOCORE_ENABLE_AAC)
 
-#include <avpack/mp4-read.h>
-#include <avpack/mmtag.h>
-#include <ffbase/string.h>
 
 extern "C" {
 #include "aacdec.h"
+#include <avpack/mp4-read.h>
+#include <avpack/mmtag.h>
+#include <ffbase/string.h>
 }
 
 #define M4A_INPUT_SIZE 8192
