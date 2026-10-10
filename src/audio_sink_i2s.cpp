@@ -40,21 +40,25 @@ public:
 
     ~AudioSinkI2s() override
     {
+        
+#if defined(CONFIG_ESPAUDIOCORE_DEBUG_DIAGNOSTICS)
         stat_dump();
         if (dump_) {
             fclose(dump_);
             dump_ = nullptr;
         }
+#endif
+
         if (lock_) {
             vSemaphoreDelete(lock_);
             lock_ = nullptr;
         }
         audio_free(buf_a_);
         audio_free(buf_b_);
-        audio_free(buf_c_);
+        // audio_free(buf_c_);
         buf_a_ = nullptr;
         buf_b_ = nullptr;
-        buf_c_ = nullptr;
+        // buf_c_ = nullptr;
     }
 
     bool init()
@@ -62,6 +66,8 @@ public:
         if (!tx_ || !lock_) {
             return false;
         }
+        
+#if defined(CONFIG_ESPAUDIOCORE_DEBUG_DIAGNOSTICS)
         /* 诊断 dump：把真实送去 I2S 的字节落盘，用电脑端工具精确比对。
          * 统计数字已经不足以定位，必须看原始样本。 */
         if (!dump_) {
@@ -70,14 +76,15 @@ public:
                 AUDIO_LOGW("diagnostic dump enabled -> /sdcard/i2s_dump.pcm");
             }
         }
+#endif
 
         /* 转换缓冲放堆/PSRAM，不放在对象里：三块合计几十 KB，
          * 放对象内会让每次 new AudioSinkI2s 都吃掉一大块堆。 */
         if (!buf_a_) {
             buf_a_ = (int32_t *)audio_alloc_big(CONV_SAMPLES * sizeof(int32_t), 0);
             buf_b_ = (uint8_t *)audio_alloc_big(CONV_SAMPLES * 4, 0);
-            buf_c_ = (int32_t *)audio_alloc_big(CONV_SAMPLES * sizeof(int32_t), 0);
-            if (!buf_a_ || !buf_b_ || !buf_c_) {
+            // buf_c_ = (int32_t *)audio_alloc_big(CONV_SAMPLES * sizeof(int32_t), 0);
+            if (!buf_a_ || !buf_b_/*  || !buf_c_ */) {
                 AUDIO_LOGE("no memory for I2S conversion buffers");
                 return false;
             }
@@ -417,8 +424,11 @@ public:
         if (!tx_) {
             return AUDIO_ERR_INVALID_ARG;
         }
+        
+#if defined(CONFIG_ESPAUDIOCORE_DEBUG_DIAGNOSTICS)
         /* 新格式开始：先把上一段的形状统计打出来（每个文件一条，不刷屏） */
         stat_dump();
+#endif
 
         /* 硬件槽宽在强制目标位宽时使用目标位宽，否则跟随源位宽。
          * 注意 cur_bits 记录的是**源**位宽（解码器输出），这样才能在 write()
@@ -516,6 +526,8 @@ public:
     }
 
 private:
+
+#if defined(CONFIG_ESPAUDIOCORE_DEBUG_DIAGNOSTICS)
     /**
      * @brief 输出"送去 I2S 的字节"的形状统计。
      *
@@ -567,6 +579,7 @@ private:
         stat_min_neg_ = 0;
         memset(stat_hist_, 0, sizeof(stat_hist_));
     }
+#endif
 
     i2s_chan_handle_t      tx_ = nullptr;
     SemaphoreHandle_t      lock_ = nullptr;
@@ -582,6 +595,8 @@ private:
     /** 32-bit 满量程（int32 范围内） */
     static const int64_t FT_FULL = 2147483647LL;
 
+    
+#if defined(CONFIG_ESPAUDIOCORE_DEBUG_DIAGNOSTICS)
     /* 送去 I2S 的字节形状统计（每个格式重置一次，用于客观判断削波） */
     int64_t  stat_peak_ = 0;
     uint64_t stat_rms_acc_ = 0;
@@ -599,10 +614,11 @@ private:
 
     FILE    *dump_ = nullptr;    /**< 诊断 dump 文件 */
     int      dump_n_ = 0;
+#endif
 
     int32_t *buf_a_ = nullptr; /**< 音量路径的 packed 32-bit 中间缓冲 */
     uint8_t *buf_b_ = nullptr; /**< 位宽转换输出缓冲（字节寻址，兼容 24-bit） */
-    int32_t *buf_c_ = nullptr; /**< 备用（保留以示三级流水线，避免将来再踩重叠） */
+    // int32_t *buf_c_ = nullptr; /**< 备用（保留以示三级流水线，避免将来再踩重叠） */
 };
 
 AudioSink *audio_sink_i2s_create(i2s_chan_handle_t tx, uint32_t io_timeout_ms, uint8_t target_bits)
