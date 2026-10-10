@@ -37,7 +37,8 @@ menu "espaudiocore"
         config ESPAUDIOCORE_ENABLE_M4A
             bool "M4A (avpack + libhelix-aac)"
             depends on ESPAUDIOCORE_ENABLE_AAC
-            default y
+            default n
+            help avpack 和 ffbase 还需要修复其与idf的兼容性问题
 
         config ESPAUDIOCORE_ENABLE_FLAC
             bool "FLAC (libflac)"
