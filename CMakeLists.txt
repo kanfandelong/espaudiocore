@@ -299,9 +299,6 @@ if(CONFIG_ESPAUDIOCORE_ENABLE_M4A AND CONFIG_ESPAUDIOCORE_ENABLE_AAC)
     target_compile_definitions(${COMPONENT_LIB} PRIVATE
         FF_UNIX FF_LITTLE_ENDIAN FFBASE_OPT_SIZE
     )
-    set_source_files_properties("src/decoder_m4a.cpp" PROPERTIES
-        COMPILE_OPTIONS "-Wall;-Wextra;-Wno-unused-parameter;-Wno-error;-fpermissive;-w"
-    )
 endif()
 
 # 第三方库降级警告：它们是移植过来的老代码，不改动，避免淹没自有代码的告警。
@@ -314,3 +311,7 @@ endif()
 # 自有代码：按项目规范开告警
 set_source_files_properties(${srcs} PROPERTIES COMPILE_OPTIONS
     "-Wall;-Wextra;-Wno-unused-parameter;-Wno-error")
+
+set_source_files_properties("src/decoder_m4a.cpp" PROPERTIES
+    COMPILE_OPTIONS "-Wall;-Wextra;-Wno-unused-parameter;-Wno-error;-fpermissive;-w"
+)
