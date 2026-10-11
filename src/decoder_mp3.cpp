@@ -472,7 +472,7 @@ private:
     espaudiocore_meta_cb_t meta_cb_ = nullptr;
     void *meta_user_ = nullptr;
 
-    XingHeaderInfo xi = {0};
+    XingHeaderInfo xi = {};
 
     int16_t buff_valid_ = 0;
     int16_t last_frame_end_ = 0;

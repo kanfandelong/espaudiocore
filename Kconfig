@@ -105,6 +105,13 @@ menu "espaudiocore"
                     若怀疑窗口实现有问题，可切到这个模式做对照。
         endchoice
 
+        config ESPAUDIOCORE_MAX_ID3TAG_MEM_SIZE
+            int "Max memory for ID3 tag parsing (KBytes)"
+            range 16 4096
+            default 512
+            help
+                ID3标签解析的内存分配最大值限制，若标签总大小超过此限制，则会跳过标签解析。
+
         config ESPAUDIOCORE_SOURCE_BUFFER_SIZE
             int "Self-managed window size (bytes)"
             depends on ESPAUDIOCORE_FILE_SOURCE_WINDOW

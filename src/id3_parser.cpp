@@ -14,11 +14,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-/** 允许的最大标签尺寸（防内存耗尽），与原实现一致 */
-static const size_t MAX_ID3_SIZE = 384 * 1024;
+/** 允许的最大标签尺寸 */
+static const size_t MAX_ID3_SIZE = CONFIG_ESPAUDIOCORE_MAX_ID3TAG_MEM_SIZE * 1024;
 
 /* ---------------------------------------------------------------------------
- * 基础读取辅助（移植自原实现）
+ * 基础读取辅助
  * -------------------------------------------------------------------------*/
 
 static inline uint32_t big32(const uint8_t *p)
@@ -82,7 +82,7 @@ static char *copyUTF8(const uint8_t *src, int len)
 
 /**
  * UTF-16 -> UTF-8。encoding: 1 = UTF-16LE, 2 = UTF-16BE；BOM 优先。
- * 逻辑与原实现一致（含 BOM 决定字节序、无 BOM 时用传入 endian）。
+ * 含 BOM 决定字节序、无 BOM 时用传入 endian。
  */
 static char *copyUTF16ToUTF8(const uint8_t *src, int len, bool isBigEndian)
 {
@@ -174,7 +174,7 @@ static char *extractString(const uint8_t *data, int len, uint8_t enc, bool &isUn
 }
 
 /* ---------------------------------------------------------------------------
- * 帧解析（移植自原实现，图片改为上报数据）
+ * 帧解析
  * -------------------------------------------------------------------------*/
 
 struct Id3Ctx {
@@ -456,7 +456,7 @@ size_t id3_parse_and_report(AudioInput *in, espaudiocore_meta_cb_t meta_cb, void
         if (got > 0 && in->can_seek()) {
             (void)in->seek(0, SEEK_SET);
         } else if (got > 0) {
-            /* 流式源无法回退：这是设计限制，需要调用者注意 */
+            /* 流式源无法回退 */
             AUDIO_LOGW("non-seekable source: %d bytes consumed while probing ID3", got);
         }
         return 0;
@@ -549,7 +549,7 @@ size_t id3_parse_and_report(AudioInput *in, espaudiocore_meta_cb_t meta_cb, void
     Id3Ctx ctx = {meta_cb, meta_user};
     parse_frames(&ctx, tag + bodyOffset, bodyLength, version);
 
-    /* 标签结束标记（沿用原实现的约定） */
+    /* 标签结束标记 */
     if (meta_cb) {
         espaudiocore_meta_t m = {};
         m.type      = "eof";
@@ -560,7 +560,7 @@ size_t id3_parse_and_report(AudioInput *in, espaudiocore_meta_cb_t meta_cb, void
         meta_cb(meta_user, &m);
     }
 
-    AUDIO_LOGI("ID3v%u parsed: %u bytes, unsync=%s", (unsigned)version, (unsigned)total,
+    AUDIO_LOGI("ID3v2.%u parsed: %u bytes, unsync=%s", (unsigned)version, (unsigned)total,
                unsync ? "yes" : "no");
 
     audio_free(tag);
