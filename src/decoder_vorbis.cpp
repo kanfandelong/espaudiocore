@@ -199,7 +199,16 @@ public:
     audio_err_t seek_ms(int64_t ms) override
     {
         uint64_t sample = (uint64_t)ms * fmt_.rate / 1000ull;
-        return ov_pcm_seek(vf_, sample) == 0 ? AUDIO_OK : AUDIO_FAIL;
+        int ret = ov_pcm_seek(vf_, sample);
+        if (ret == 0)
+        {
+            return AUDIO_OK;
+        }
+        else
+        {
+            AUDIO_LOGE("DecoderVorbis seek fail: %d", ret);
+            return AUDIO_FAIL;
+        }
     }
 
     void reset() override
