@@ -111,22 +111,27 @@ static void ctx_destroy(PlayerCtx *c)
     }
     if (c->dec)
     {
+        AUDIO_LOGD("teardown: dec->close()");
         c->dec->close();
+        AUDIO_LOGD("teardown: delete dec");
         delete c->dec;
         c->dec = nullptr;
     }
     if (c->sink)
     {
+        AUDIO_LOGD("teardown: delete sink");
         delete c->sink;
         c->sink = nullptr;
     }
     if (c->in)
     {
+        AUDIO_LOGD("teardown: delete input");
         delete c->in;
         c->in = nullptr;
     }
     if (c->done_sem)
     {
+        AUDIO_LOGD("teardown: delete done_sem");
         vSemaphoreDelete(c->done_sem);
         c->done_sem = nullptr;
     }
@@ -134,7 +139,9 @@ static void ctx_destroy(PlayerCtx *c)
     {
         s_ctx = nullptr;
     }
+    AUDIO_LOGD("teardown: delete ctx");
     delete c;
+    AUDIO_LOGD("teardown: ctx destroyed");
 }
 
 /**

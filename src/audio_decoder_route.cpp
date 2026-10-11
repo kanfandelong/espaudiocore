@@ -162,20 +162,26 @@ const audio_decoder_entry_t *audio_decoder_route(AudioInput *in, const char *pat
         return NULL;
     }
 
-    int idx = audio_decoder_find_by_ext(path);
-    if (idx >= 0 && g_decoders[idx].create) {
-        return &g_decoders[idx];
+    const int idx_magic = audio_decoder_find_by_magic(in);
+    const int idx_ext   = audio_decoder_find_by_ext(path);
+
+    if (in->can_seek()) {
+        (void)in->seek(0, SEEK_SET);
     }
 
-    /* 扩展名未知或不匹配：退回魔数探测 */
-    idx = audio_decoder_find_by_magic(in);
-    if (idx >= 0 && g_decoders[idx].create) {
-        if (in->can_seek()) {
-            /* 探测过程用 peek，本不应改动位置；这里复位是为了稳妥 */
-            (void)in->seek(0, SEEK_SET);
+    if (idx_magic >= 0 && g_decoders[idx_magic].create) {
+        if (idx_ext >= 0 && idx_ext != idx_magic) {
+            AUDIO_LOGW("'%s': ext says %s but magic says %s -> using magic",
+                       path ? path : "(stream)", g_decoders[idx_ext].name,
+                       g_decoders[idx_magic].name);
         }
-        AUDIO_LOGI("routed by magic bytes -> %s", g_decoders[idx].name);
-        return &g_decoders[idx];
+        return &g_decoders[idx_magic];
+    }
+
+    if (idx_ext >= 0 && g_decoders[idx_ext].create) {
+        AUDIO_LOGW("'%s': magic probe failed, falling back to ext (%s)",
+                   path ? path : "(stream)", g_decoders[idx_ext].name);
+        return &g_decoders[idx_ext];
     }
 
     AUDIO_LOGE("no decoder available for '%s'", path ? path : "(stream)");

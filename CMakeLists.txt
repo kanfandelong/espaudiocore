@@ -34,11 +34,6 @@ set(srcs
     "src/decoder_wavpack.cpp"
 )
 
-if(CONFIG_ESPAUDIOCORE_ENABLE_M4A AND CONFIG_ESPAUDIOCORE_ENABLE_AAC)
-    set_source_files_properties("src/decoder_m4a.cpp" PROPERTIES
-        COMPILE_DEFINITIONS "FF_LITTLE_ENDIAN;FF_UNIX")
-endif()
-
 # ---------------------------------------------------------------------------
 # 第三方解码库（默认全部编译；可在 menuconfig 里按格式裁剪）
 # ---------------------------------------------------------------------------
@@ -46,9 +41,9 @@ set(thirdparty_srcs)
 set(thirdparty_incs)
 set(thirdparty_flags)
 
-if (CONFIG_ESPAUDIOCORE_ENABLE_M4A)
+if (CONFIG_ESPAUDIOCORE_ENABLE_M4A AND CONFIG_ESPAUDIOCORE_ENABLE_AAC)
     list(APPEND thirdparty_incs "lib" "lib/avpack")
-    list(APPEND thirdparty_incs "lib" "lib/ffbase")
+    # list(APPEND thirdparty_incs "lib" "lib/ffbase")
     list(APPEND thirdparty_srcs
         "lib/ffbase/str-format.c"
         "lib/ffbase/sort.c"
@@ -300,19 +295,13 @@ idf_component_register(
     REQUIRES esp_driver_i2s esp_driver_gpio esp_ringbuf
 )
 
-# 可选：强制文件数据源模式，便于在一次构建里对照验证两条路径。
-#   idf.py -DESPAUDIOCORE_FILE_SOURCE_VFS_TEST=ON -B build_vfs build
-# 优先级高于 Kconfig（见 src/audio_source_fs.cpp 顶部的模式选择）。
-option(ESPAUDIOCORE_FILE_SOURCE_VFS_TEST "Force pure-VFS file source (setvbuf path verification)" OFF)
-if(ESPAUDIOCORE_FILE_SOURCE_VFS_TEST)
-    target_compile_definitions(${COMPONENT_LIB} PRIVATE ESPAUDIOCORE_FORCE_FILE_SOURCE_VFS=1)
-    message(STATUS "espaudiocore: forcing PURE VFS file source")
-endif()
-
-option(ESPAUDIOCORE_FILE_SOURCE_WINDOW_TEST "Force self-managed window file source" OFF)
-if(ESPAUDIOCORE_FILE_SOURCE_WINDOW_TEST)
-    target_compile_definitions(${COMPONENT_LIB} PRIVATE ESPAUDIOCORE_FORCE_FILE_SOURCE_WINDOW=1)
-    message(STATUS "espaudiocore: forcing self-managed WINDOW file source")
+if(CONFIG_ESPAUDIOCORE_ENABLE_M4A AND CONFIG_ESPAUDIOCORE_ENABLE_AAC)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE
+        FF_UNIX FF_LITTLE_ENDIAN FFBASE_OPT_SIZE
+    )
+    set_source_files_properties("src/decoder_m4a.cpp" PROPERTIES
+        COMPILE_OPTIONS "-Wall;-Wextra;-Wno-unused-parameter;-Wno-error;-fpermissive;-w"
+    )
 endif()
 
 # 第三方库降级警告：它们是移植过来的老代码，不改动，避免淹没自有代码的告警。

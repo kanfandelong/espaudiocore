@@ -113,7 +113,7 @@ enum MP4_F {
 };
 
 struct mp4_bbox {
-	char type[4];
+	char type[5];
 	ffuint flags; // "minsize" "priority" "enum MP4_F" "enum BOX"
 	const struct mp4_bbox *ctx;
 };
@@ -1100,7 +1100,12 @@ static inline int mp4_ilst_data_read(const char *data, ffuint len, ffuint parent
 	return parent_type;
 }
 
-static const struct mp4_bbox mp4_ctx_ilst[];
+#ifdef __cplusplus
+#define MP4_BBOX_TBL  extern const struct mp4_bbox
+#else
+#define MP4_BBOX_TBL  static const struct mp4_bbox
+#endif
+MP4_BBOX_TBL mp4_ctx_ilst[];
 
 /** Find box by tag ID. */
 static inline const struct mp4_bbox* mp4_ilst_find(ffuint mmtag)
@@ -1224,7 +1229,7 @@ moov
 mdat
 */
 
-static const struct mp4_bbox
+MP4_BBOX_TBL
 	mp4_ctx_moov[],
 	mp4_ctx_trak[],
 	mp4_ctx_edts[],
@@ -1242,47 +1247,47 @@ static const struct mp4_bbox
 	mp4_ctx_data[],
 	mp4_ctx_itunes[];
 
-static const struct mp4_bbox mp4_ctx_global[] = {
+MP4_BBOX_TBL mp4_ctx_global[] = {
 	{"ftyp", BOX_FTYP | MP4_PRIO(1) | MP4_MINSIZE(sizeof(struct mp4_ftyp)), NULL},
 	{"moov", BOX_MOOV | MP4_PRIO(2), mp4_ctx_moov},
 	{"mdat", BOX_MDAT | MP4_PRIO(2) | MP4_F_LAST, NULL},
 };
-static const struct mp4_bbox mp4_ctx_global_stream[] = {
+MP4_BBOX_TBL mp4_ctx_global_stream[] = {
 	{"ftyp", BOX_FTYP | MP4_MINSIZE(sizeof(struct mp4_ftyp)), NULL},
 	{"mdat", BOX_MDAT, NULL},
 	{"moov", BOX_MOOV | MP4_F_LAST, mp4_ctx_moov},
 };
-static const struct mp4_bbox mp4_ctx_moov[] = {
+MP4_BBOX_TBL mp4_ctx_moov[] = {
 	{"mvhd", BOX_MVHD | MP4_F_FULLBOX | MP4_F_REQ | MP4_MINSIZE(sizeof(struct mp4_mvhd0)), NULL},
 	{"trak", BOX_TRAK | MP4_F_MULTI, mp4_ctx_trak},
 	{"udta", BOX_ANY | MP4_F_LAST, mp4_ctx_udta},
 };
 
-static const struct mp4_bbox mp4_ctx_trak[] = {
+MP4_BBOX_TBL mp4_ctx_trak[] = {
 	{"tkhd", BOX_TKHD | MP4_F_FULLBOX | MP4_F_REQ | MP4_MINSIZE(sizeof(struct mp4_tkhd0)), NULL},
 	{"edts", BOX_ANY, mp4_ctx_edts },
 	{"mdia", BOX_ANY | MP4_F_LAST, mp4_ctx_mdia},
 };
-static const struct mp4_bbox mp4_ctx_edts[] = {
+MP4_BBOX_TBL mp4_ctx_edts[] = {
 	{"elst", BOX_ELST | MP4_F_FULLBOX | MP4_F_WHOLE | MP4_F_LAST, NULL},
 };
-static const struct mp4_bbox mp4_ctx_mdia[] = {
+MP4_BBOX_TBL mp4_ctx_mdia[] = {
 	{"mdhd", BOX_MDHD | MP4_F_FULLBOX | MP4_F_REQ | MP4_MINSIZE(sizeof(struct mp4_mdhd0)), NULL},
 	{"hdlr", BOX_HDLR | MP4_F_FULLBOX | MP4_F_REQ | MP4_MINSIZE(8), NULL},
 	{"minf", BOX_ANY | MP4_F_LAST, mp4_ctx_minf},
 };
-static const struct mp4_bbox mp4_ctx_minf[] = {
+MP4_BBOX_TBL mp4_ctx_minf[] = {
 	{"smhd", BOX_ANY | MP4_F_FULLBOX | MP4_MINSIZE(sizeof(struct mp4_smhd)), NULL},
 	{"dinf", BOX_ANY | MP4_F_REQ, mp4_ctx_dinf},
 	{"stbl", BOX_ANY | MP4_F_LAST, mp4_ctx_stbl},
 };
-static const struct mp4_bbox mp4_ctx_dinf[] = {
+MP4_BBOX_TBL mp4_ctx_dinf[] = {
 	{"dref", BOX_DREF | MP4_F_FULLBOX | MP4_F_REQ | MP4_MINSIZE(sizeof(struct mp4_dref)) | MP4_F_LAST, mp4_ctx_dref},
 };
-static const struct mp4_bbox mp4_ctx_dref[] = {
+MP4_BBOX_TBL mp4_ctx_dref[] = {
 	{"url ", BOX_DREF_URL | MP4_F_FULLBOX | MP4_F_LAST, NULL},
 };
-static const struct mp4_bbox mp4_ctx_stbl[] = {
+MP4_BBOX_TBL mp4_ctx_stbl[] = {
 	{"stsd", BOX_STSD | MP4_F_FULLBOX | MP4_F_REQ | MP4_MINSIZE(sizeof(struct mp4_stsd)), mp4_ctx_stsd},
 	{"co64", BOX_CO64 | MP4_F_FULLBOX | MP4_F_WHOLE | MP4_MINSIZE(sizeof(struct mp4_co64)) | MP4_F_RO, NULL},
 	{"stco", BOX_STCO | MP4_F_FULLBOX | MP4_F_WHOLE | MP4_MINSIZE(sizeof(struct mp4_stco)), NULL},
@@ -1290,29 +1295,29 @@ static const struct mp4_bbox mp4_ctx_stbl[] = {
 	{"stsz", BOX_STSZ | MP4_F_FULLBOX | MP4_F_REQ | MP4_F_WHOLE | MP4_MINSIZE(sizeof(struct mp4_stsz)), NULL},
 	{"stts", BOX_STTS | MP4_F_FULLBOX | MP4_F_REQ | MP4_F_WHOLE | MP4_MINSIZE(sizeof(struct mp4_stts)) | MP4_F_LAST, NULL},
 };
-static const struct mp4_bbox mp4_ctx_stsd[] = {
+MP4_BBOX_TBL mp4_ctx_stsd[] = {
 	{"alac", BOX_STSD_ALAC | MP4_MINSIZE(sizeof(struct mp4_afmt)) | MP4_F_RO, mp4_ctx_alac},
 	{"avc1", BOX_STSD_AVC1 | MP4_F_WHOLE | MP4_MINSIZE(sizeof(struct mp4_avc1_read)) | MP4_F_RO, NULL},
 	{"mp4a", BOX_STSD_MP4A | MP4_F_WHOLE | MP4_MINSIZE(sizeof(struct mp4_afmt)) | MP4_F_LAST, mp4_ctx_mp4a},
 };
-static const struct mp4_bbox mp4_ctx_alac[] = {
+MP4_BBOX_TBL mp4_ctx_alac[] = {
 	{"alac", BOX_ALAC | MP4_F_FULLBOX | MP4_F_REQ | MP4_F_WHOLE | MP4_MINSIZE(sizeof(struct mp4_alac)) | MP4_F_LAST, NULL},
 };
-static const struct mp4_bbox mp4_ctx_mp4a[] = {
+MP4_BBOX_TBL mp4_ctx_mp4a[] = {
 	{"esds", BOX_ESDS | MP4_F_FULLBOX | MP4_F_WHOLE, NULL},
 	{"wave", BOX_ANY | MP4_F_RO | MP4_F_LAST, mp4_ctx_mp4a_wave},
 };
-static const struct mp4_bbox mp4_ctx_mp4a_wave[] = {
+MP4_BBOX_TBL mp4_ctx_mp4a_wave[] = {
 	{"esds", BOX_ESDS | MP4_F_FULLBOX | MP4_F_WHOLE | MP4_F_LAST, NULL},
 };
 
-static const struct mp4_bbox mp4_ctx_udta[] = {
+MP4_BBOX_TBL mp4_ctx_udta[] = {
 	{"meta", BOX_ANY | MP4_F_FULLBOX | MP4_F_LAST, mp4_ctx_meta},
 };
-static const struct mp4_bbox mp4_ctx_meta[] = {
+MP4_BBOX_TBL mp4_ctx_meta[] = {
 	{"ilst", BOX_ANY | MP4_F_LAST, mp4_ctx_ilst},
 };
-static const struct mp4_bbox mp4_ctx_ilst[] = {
+MP4_BBOX_TBL mp4_ctx_ilst[] = {
 	{"aART",	_BOX_TAG + MMTAG_ALBUMARTIST,	mp4_ctx_data},
 	{"covr",	_BOX_TAG + MMTAG_PICTURE,	mp4_ctx_data},
 	{"cprt",	_BOX_TAG + MMTAG_COPYRIGHT,	mp4_ctx_data},
@@ -1333,11 +1338,11 @@ static const struct mp4_bbox mp4_ctx_ilst[] = {
 	{"----",	BOX_ITUNES | MP4_F_MULTI | MP4_F_LAST,	mp4_ctx_itunes},
 };
 
-static const struct mp4_bbox mp4_ctx_data[] = {
+MP4_BBOX_TBL mp4_ctx_data[] = {
 	{"data", BOX_ILST_DATA | MP4_F_WHOLE | MP4_MINSIZE(sizeof(struct mp4_ilst_data)) | MP4_F_LAST, NULL},
 };
 
-static const struct mp4_bbox mp4_ctx_itunes[] = {
+MP4_BBOX_TBL mp4_ctx_itunes[] = {
 	{"mean", BOX_ITUNES_MEAN | MP4_F_FULLBOX | MP4_F_WHOLE, NULL},
 	{"name", BOX_ITUNES_NAME | MP4_F_FULLBOX | MP4_F_WHOLE, NULL},
 	{"data", BOX_ITUNES_DATA | MP4_F_WHOLE | MP4_MINSIZE(sizeof(struct mp4_ilst_data)) | MP4_F_LAST, NULL},

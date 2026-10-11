@@ -108,6 +108,7 @@ public:
             {
                 xi = parseXingHeader(xing_, (size_t)n);
                 audio_free(xing_);
+                xing_ = nullptr;
                 if (xi.valid)
                 {
                     duration_hint_ms_ = (int64_t)(xi.duration * 1000.0f);
@@ -121,26 +122,50 @@ public:
             (void)in_->seek((int64_t)first_frame_pos_, SEEK_SET);
         }
 
-        /* 3) 先解一帧，拿到真实格式 */
-        if (!fill_valid_frame())
+
+        const int kMaxSyncCandidates = 64;
+        audio_err_t r = AUDIO_ERR_PARSE;
+        int attempts = 0;
+        for (;;)
         {
-            AUDIO_LOGW("MP3: no valid frame found");
-            if (dec_err)
+            if (!fill_valid_frame())
             {
-                *dec_err = AUDIO_DEC_ERR_PARSE;
+                AUDIO_LOGW("MP3: no valid frame found (candidates tried=%d)", attempts);
+                if (dec_err)
+                {
+                    *dec_err = AUDIO_DEC_ERR_PARSE;
+                }
+                close();
+                return AUDIO_ERR_PARSE;
             }
-            close();
-            return AUDIO_ERR_PARSE;
+            r = decode_frame();
+            if (r == AUDIO_OK)
+            {
+                break;
+            }
+            if (++attempts >= kMaxSyncCandidates)
+            {
+                AUDIO_LOGW("MP3: %d sync candidates all failed to decode", attempts);
+                if (dec_err)
+                {
+                    *dec_err = AUDIO_DEC_ERR_PARSE;
+                }
+                close();
+                return AUDIO_ERR_PARSE;
+            }
+            if (buff_valid_ > 1)
+            {
+                memmove(buf_, buf_ + 1, (size_t)(buff_valid_ - 1));
+                buff_valid_ = (int16_t)(buff_valid_ - 1);
+            }
+            else
+            {
+                buff_valid_ = 0;
+            }
         }
-        audio_err_t r = decode_frame();
-        if (r != AUDIO_OK)
+        if (attempts > 0)
         {
-            if (dec_err)
-            {
-                *dec_err = AUDIO_DEC_ERR_PARSE;
-            }
-            close();
-            return AUDIO_ERR_PARSE;
+            AUDIO_LOGI("MP3: resynced after %d false sync candidate(s)", attempts);
         }
 
         if (fmt)
