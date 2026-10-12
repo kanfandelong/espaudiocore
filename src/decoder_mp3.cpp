@@ -297,8 +297,7 @@ public:
             abs_off = 0;
         }
 
-        AUDIO_LOGI("MP3 seek: %lld ms -> byte %lld (first_frame=%lld, avg=%u bps, size=%lld, path=%s)", (long long)ms, (long long)abs_off, (long long)first_frame_pos_,
- (unsigned)avg_bitrate_, (long long)sz, (xi.valid && xi.has_toc && xi.bytes > 0 && duration_hint_ms_ > 0) ? "TOC" : "avg");
+        AUDIO_LOGI("MP3 seek: %lld ms -> byte %lld (first_frame=%lld, avg=%u bps, size=%lld, path=%s)", (long long)ms, (long long)abs_off, (long long)first_frame_pos_, (unsigned)avg_bitrate_, (long long)sz, (xi.valid && xi.has_toc && xi.bytes > 0 && duration_hint_ms_ > 0) ? "TOC" : "avg");
 
         if (in_->seek(abs_off, SEEK_SET) != AUDIO_OK) {
             return AUDIO_ERR_IO;
