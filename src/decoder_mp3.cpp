@@ -517,38 +517,30 @@ private:
 };
 
 /** 魔数探测：MP3 无固定魔数，靠帧同步字 + 字段合法性交叉验证 */
+extern size_t id3v2_skip(AudioInput *in);
 bool probe_mp3(AudioInput *in)
 {
-    uint8_t h[16];
-    if (!in)
-    {
+    id3v2_skip(in);                 /* 关键：跳过 ID3v2 */
+
+    uint8_t b[4];
+    if (in->read(b, 4) != 4) {
+        if (in->can_seek()) in->seek(0, SEEK_SET);
         return false;
     }
-    int got = in->peek(h, sizeof(h), 10);
-    if (got < 10)
-    {
-        return false;
-    }
-    if (memcmp(h, "ID3", 3) == 0)
-    {
-        return true;
-    }
-    for (int i = 0; i + 4 <= got; i++)
-    {
-        if (h[i] != 0xFF || (h[i + 1] & 0xE0) != 0xE0)
-        {
-            continue;
-        }
-        uint8_t ver = (h[i + 1] >> 3) & 0x03;
-        uint8_t layer = (h[i + 1] >> 1) & 0x03;
-        uint8_t br = (h[i + 2] >> 4) & 0x0F;
-        uint8_t sr = (h[i + 2] >> 2) & 0x03;
-        if (ver != 1 && layer != 0 && br != 0 && br != 15 && sr != 3)
-        {
-            return true;
-        }
-    }
-    return false;
+    if (in->can_seek()) in->seek(0, SEEK_SET);
+
+    if (b[0] != 0xFF)                        return false;
+    if ((b[1] & 0xE0) != 0xE0)               return false; /* sync 高 11 位 */
+
+    /* layer bits (b[1] >> 1) & 0x3：00 = reserved / ADTS，明确排除 */
+    if (((b[1] >> 1) & 0x03) == 0x00)        return false;
+
+    /* bitrate index 1111 无效 */
+    if (((b[2] >> 4) & 0x0F) == 0x0F)        return false;
+    /* sampling rate index 11 保留 */
+    if (((b[2] >> 2) & 0x03) == 0x03)        return false;
+
+    return true;
 }
 
 AudioDecoder *create_mp3(void)

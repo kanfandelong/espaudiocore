@@ -566,3 +566,32 @@ size_t id3_parse_and_report(AudioInput *in, espaudiocore_meta_cb_t meta_cb, void
     audio_free(tag);
     return id3Size;
 }
+
+size_t id3v2_skip(AudioInput *in)
+{
+    uint8_t hdr[10];
+    if (!in->can_seek()) {
+        return 0;
+    }
+    if (in->read(hdr, sizeof(hdr)) != (int)sizeof(hdr)) {
+        in->seek(0, SEEK_SET);
+        return 0;
+    }
+    if (memcmp(hdr, "ID3", 3) != 0) {
+        in->seek(0, SEEK_SET);
+        return 0;
+    }
+
+    /* synchsafe：每字节只用低 7 位 */
+    uint32_t sz = ((uint32_t)(hdr[6] & 0x7F) << 21)
+                | ((uint32_t)(hdr[7] & 0x7F) << 14)
+                | ((uint32_t)(hdr[8] & 0x7F) <<  7)
+                |  (uint32_t)(hdr[9] & 0x7F);
+
+    /* flags 的 bit4 = footer present */
+    if (hdr[5] & 0x10) sz += 10;
+
+    size_t off = 10 + (size_t)sz;
+    in->seek(off, SEEK_SET);
+    return off;
+}

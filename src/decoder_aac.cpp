@@ -352,26 +352,26 @@ private:
 };
 
 /** 魔数探测：ADTS 同步字 0xFFF + layer 必须为 0 */
+extern size_t id3v2_skip(AudioInput *in);
 bool probe_aac(AudioInput *in)
 {
-    uint8_t h[8];
-    if (!in) {
+    id3v2_skip(in);                 /* 关键：跳过 ID3v2 */
+
+    uint8_t b[4];
+    if (in->read(b, 4) != 4) {
+        if (in->can_seek()) in->seek(0, SEEK_SET);
         return false;
     }
-    int got = in->peek(h, sizeof(h), 4);
-    if (got < 4) {
-        return false;
-    }
-    if (h[0] != 0xFF || (h[1] & 0xF0) != 0xF0) {
-        return false;
-    }
-    /* ADTS：layer 位必须为 00，sampling_frequency_index 不能是 15 */
-    if (((h[1] >> 1) & 0x03) != 0) {
-        return false;
-    }
-    if (((h[2] >> 2) & 0x0F) == 0x0F) {
-        return false;
-    }
+    if (in->can_seek()) in->seek(0, SEEK_SET);
+
+    if (b[0] != 0xFF)                        return false;
+    /* ADTS: 1111 (ID=x) 00 (layer) (protection)
+     * 掩码 0xF6 = 1111 0 11 0 —— 忽略 ID 位与 protection 位 */
+    if ((b[1] & 0xF6) != 0xF0)               return false;
+
+    /* sampling_frequency_index 1111 保留 */
+    if (((b[2] >> 2) & 0x0F) == 0x0F)        return false;
+
     return true;
 }
 
