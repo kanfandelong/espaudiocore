@@ -474,7 +474,7 @@ private:
         /* 比特率累加 -> 时长估算（逻辑同原实现，但只上报一次，避免刷屏） */
         if (duration_hint_ms_ < 0 && !est_reported_ && fi.bitrate > 0)
         {
-            bitrate_sum_ += (uint64_t)fi.bitrate * 1000ull;
+            bitrate_sum_ += (uint64_t)fi.bitrate;
             bitrate_count_++;
             if (bitrate_count_ >= 50)
             {
