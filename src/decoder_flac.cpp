@@ -177,6 +177,18 @@ public:
             return AUDIO_ERR_DECODE;
         }
 
+        if (err_fatal_)
+        {
+            AUDIO_LOGE("FLAC: %u errors (streak %u) 已达阈值，判定该文件解不出来 —— "
+                       "reads=%u short=%u zero=%u", (unsigned)err_count_,
+                       (unsigned)err_streak_, (unsigned)read_calls_, (unsigned)read_short_,
+                       (unsigned)read_zero_);
+            state_ = AUDIO_DEC_STATE_ERROR;
+            last_error_ = AUDIO_DEC_ERR_PARSE;
+            return AUDIO_ERR_DECODE;
+        }
+        err_streak_ = 0;   /* 这一帧解出来了：连续错误计数清零（阈值判的是"连续"）*/
+
         st = FLAC__stream_decoder_get_state(dec_);
         if (st == FLAC__STREAM_DECODER_END_OF_STREAM)
         {
@@ -239,16 +251,47 @@ private:
         {
             return FLAC__STREAM_DECODER_READ_STATUS_ABORT;
         }
-        int n = self->in_->read(buf, *bytes);
-        if (n > 0)
+        /*
+         * ★ 2026-10 修（真机 96k/24bit FLAC 卡顿的 P0 怀疑点）：
+         *   原实现"read() 拿不到数据就立刻当流结束" ✗ —— 本地文件走
+         *   `AudioSourceFs::read()`（返回 fread 的短读计数），SD/FATFS 一次抖动
+         *   返回 0 就会被 libFLAC 当成**文件结束** ✗，随后它
+         *   `Rewinding, seeking necessary` 回退重找同步、再失败 —— 真机日志里
+         *   每秒刷十几条 `FLAC error: …_LOST_SYNC`，CPU 白烧、听感持续卡顿 ✓。
+         *
+         *   所以先**重试三次**再判定结束；同时把 读调用/短读/零读 计数留给
+         *   decode() 失败时打印（一次日志就能区分"SD 短读"和"文件本身坏"）。
+         */
+        int n = 0;
+        for (int attempt = 0; attempt < 3; attempt++)
         {
-            *bytes = (size_t)n;
-            return FLAC__STREAM_DECODER_READ_STATUS_CONTINUE;
+            n = self->in_->read(buf, *bytes);
+            if (n > 0)
+            {
+                break;
+            }
         }
-        /* 关键：拿不到数据必须置 *bytes = 0 且返回 END_OF_STREAM。
-         * 原实现保留了请求量却返回 CONTINUE，libFLAC 会立即回调 -> 忙等/死锁。 */
-        *bytes = 0;
-        return FLAC__STREAM_DECODER_READ_STATUS_END_OF_STREAM;
+        self->read_calls_++;
+        if (n <= 0)
+        {
+            self->read_zero_++;
+            if (self->read_zero_ <= 3)
+            {
+                AUDIO_LOGW("FLAC read: %d bytes (want %u, at %lld/%lld) -> 当作流结束",
+                           n, (unsigned)*bytes, (long long)self->in_->tell(),
+                           (long long)self->in_->size());
+            }
+            /* 拿不到数据必须置 *bytes = 0 且返回 END_OF_STREAM（保留原注释的意图：
+             * 不能保留请求量却返回 CONTINUE，否则 libFLAC 立即回调 -> 忙等/死锁）。 */
+            *bytes = 0;
+            return FLAC__STREAM_DECODER_READ_STATUS_END_OF_STREAM;
+        }
+        if ((size_t)n < *bytes)
+        {
+            self->read_short_++;   /* 短读是合法的：libFLAC 会接着再要一次 ✓ */
+        }
+        *bytes = (size_t)n;
+        return FLAC__STREAM_DECODER_READ_STATUS_CONTINUE;
     }
 
     static FLAC__StreamDecoderSeekStatus seek_cb(const FLAC__StreamDecoder *d,
@@ -502,13 +545,48 @@ private:
         }
     }
 
+    /*
+     * ★ 2026-10 改：错误回调**不能只打印** ✗。
+     *
+     *   libFLAC 遇到 LOST_SYNC / OUT_OF_BOUNDS 会自己 "Rewinding, seeking necessary"
+     *   回退重找同步，然后**再次**失败 —— 真机日志里每秒十几条、CPU 白烧、听感持续
+     *   卡顿，而外层完全看不出"这个文件其实解不出来" ✗。
+     *
+     *   现在：计数 + 只打前 5 条（带 libFLAC 的解码位置，用来判断是不是固定偏移出错）
+     *   + **连续**错误达 kMaxErrStreak 就置 err_fatal_，由 decode() 返回解码错误 ⇒
+     *   上层走"这个文件解不出来，已跳过"（music_tick 的本地看门狗/跳过逻辑已能接）。
+     */
     static void error_cb(const FLAC__StreamDecoder *d, FLAC__StreamDecoderErrorStatus status,
                          void *ctx)
     {
-        (void)d;
-        (void)ctx;
-        AUDIO_LOGW("FLAC error: %s", FLAC__StreamDecoderErrorStatusString[status]);
+        DecoderFlac *self = static_cast<DecoderFlac *>(ctx);
+        if (self == nullptr)
+        {
+            AUDIO_LOGW("FLAC error: %s", FLAC__StreamDecoderErrorStatusString[status]);
+            return;
+        }
+        self->err_count_++;
+        self->err_streak_++;
+        if (self->err_count_ <= 5)
+        {
+            FLAC__uint64 pos = 0;
+            if (d != nullptr)
+            {
+                (void)FLAC__stream_decoder_get_decode_position(d, &pos);
+            }
+            AUDIO_LOGW("FLAC error: %s (#%u, pos=%llu, reads=%u short=%u zero=%u)",
+                       FLAC__StreamDecoderErrorStatusString[status], (unsigned)self->err_count_,
+                       (unsigned long long)pos, (unsigned)self->read_calls_,
+                       (unsigned)self->read_short_, (unsigned)self->read_zero_);
+        }
+        if (self->err_streak_ >= kMaxErrStreak)
+        {
+            self->err_fatal_ = true;
+        }
     }
+
+    /** 连续多少个解码错误就判定"这个文件解不出来"（见 error_cb 的说明）*/
+    static constexpr uint32_t kMaxErrStreak = 32;
 
     AudioInput *in_ = nullptr;
     AudioSink *out_ = nullptr;
@@ -524,6 +602,14 @@ private:
     uint8_t src_bits_ = 16;
     bool aborted_ = false;
     int64_t duration_hint_ms_ = -1;
+
+    /* 诊断计数（见 read_cb / error_cb）：一次失败日志就能区分"SD 短读"与"文件坏" */
+    uint32_t read_calls_ = 0;
+    uint32_t read_short_ = 0;
+    uint32_t read_zero_ = 0;
+    uint32_t err_count_ = 0;
+    uint32_t err_streak_ = 0;
+    bool err_fatal_ = false;
 };
 
 /** 魔数：FLAC 流以 "fLaC" 开头 */
