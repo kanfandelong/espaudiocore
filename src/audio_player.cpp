@@ -382,6 +382,12 @@ static esp_err_t player_begin(AudioInput *in, const audio_decoder_entry_t *entry
     /* 初始音量 */
     c->sink->set_volume_db(c->cfg.volume_db);
 
+    /* FFT / 波形 PCM 旁路：只有 I2S 输出才需要（ringbuf 输出本身已把 PCM 交给应用） */
+    if (i2s_output && c->cfg.on_pcm)
+    {
+        audio_sink_i2s_set_pcm(c->sink, c->cfg.on_pcm, c->cfg.user);
+    }
+
     /* 打开解码器：解析头部、上报元数据、回填格式与时长。
      * 注意传的是**包装回调**，不是用户回调本身——这样解码过程中估算出的
      * 时长（tlen）能同步回 player，保证 get_duration_ms() 与 meta 回调一致。 */
@@ -424,15 +430,17 @@ static esp_err_t player_begin(AudioInput *in, const audio_decoder_entry_t *entry
         stack = CONFIG_ESPAUDIOCORE_TASK_STACK_DEFAULT;
     }
     int prio = c->cfg.task_priority ? c->cfg.task_priority : CONFIG_ESPAUDIOCORE_TASK_PRIORITY;
-    int core = c->cfg.task_core;
 
-    s_ctx = c; /* 先发布，on_event(STARTED) 里可能回调查询状态 */
+    BaseType_t core = (c->cfg.task_core < 0) ? (BaseType_t)tskNO_AFFINITY
+                                             : (BaseType_t)c->cfg.task_core;
+
+    s_ctx = c;
 
     BaseType_t ok = xTaskCreatePinnedToCore(decode_task, "espaudio_dec", stack, c, prio, &c->task, core);
     if (ok != pdPASS)
     {
         AUDIO_LOGE("failed to create decode task (%u bytes stack, prio %d, core %d)", (unsigned)stack,
-                   prio, core);
+                   prio, (int)core);
         ctx_destroy(c);
         return ESP_ERR_NO_MEM;
     }

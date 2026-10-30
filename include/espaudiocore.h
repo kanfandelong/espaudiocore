@@ -31,6 +31,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "esp_err.h"
@@ -111,6 +112,43 @@ typedef struct {
 typedef void (*espaudiocore_meta_cb_t)(void *user, const espaudiocore_meta_t *meta);
 
 /* ===========================================================================
+ * PCM 旁路（供 FFT / 频谱 / 波形等可视化功能取数）
+ * =========================================================================*/
+
+/**
+ * @brief 一段解码后的 PCM 数据。
+ *
+ * 数值语义与解码器交给输出层的完全一致：**左对齐到 32 位的 int32 采样点**。
+ *  - `bits == 16`：值 = int16 << 16，取 16 位波形直接 `v >> 16`；
+ *  - `bits == 24`：值 = int24 << 8；
+ *  - `bits == 32`：原值。
+ *
+ * 这样应用层既能拿到 16-bit 播放器所需的幅度，也不会让 24/32-bit 源丢精度。
+ */
+typedef struct {
+    const int32_t *samples;  /**< 交错采样点：samples[frame * channels + ch] */
+    size_t         frames;   /**< 帧数（每帧含 channels 个采样点） */
+    uint32_t       rate;     /**< 当前采样率 Hz */
+    uint8_t        channels; /**< 声道数 1/2 */
+    uint8_t        bits;     /**< 有效位深 16/24/32，见上面的对齐说明 */
+} espaudiocore_pcm_t;
+
+/**
+ * @brief PCM 旁路回调：每批解码数据**写入输出之前**、**音量缩放之前**触发。
+ *
+ * 用途：FFT / 频谱 / 波形采样。数据本身是零拷贝的，不需要额外缓冲。
+ *
+ * 契约：在**解码任务上下文**同步执行，禁止阻塞（不要做 I2S 写、网络请求、
+ *       GUI 重绘）。`pcm->samples` 仅在回调期间有效，需要留存必须自行拷贝。
+ *       `frames` 可能较大（MP3 一帧 1152 帧），逐点处理时注意耗时。
+ *
+ * @note 目前只在 **I2S 输出**（`espaudiocore_begin()` / `espaudiocore_begin_stream()`）
+ *       时提供；ringbuf 输出模式下应用本身已经拿到 PCM，无需旁路。
+ *       未设置时不产生任何额外开销。
+ */
+typedef void (*espaudiocore_pcm_cb_t)(void *user, const espaudiocore_pcm_t *pcm);
+
+/* ===========================================================================
  * 格式（ringbuf 输入时必须显式给出）
  * =========================================================================*/
 
@@ -151,6 +189,7 @@ typedef struct {
 
     espaudiocore_event_cb_t on_event; /**< 可为 NULL */
     espaudiocore_meta_cb_t  on_meta;  /**< 可为 NULL */
+    espaudiocore_pcm_cb_t   on_pcm;   /**< PCM 旁路（FFT/波形），可为 NULL；仅 I2S 输出生效 */
     void                   *user;     /**< 回调 user 指针 */
 } espaudiocore_cfg_t;
 

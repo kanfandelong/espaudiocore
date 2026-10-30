@@ -142,6 +142,13 @@ public:
         stop_flag_ = flag;
     }
 
+    /** 绑定 FFT / 波形取数回调 */
+    void set_pcm_callback(espaudiocore_pcm_cb_t cb, void *user)
+    {
+        pcm_cb_ = cb;
+        pcm_user_ = user;
+    }
+
     /* ---------------- AudioSink ---------------- */
 
     /**
@@ -170,6 +177,9 @@ public:
         const bool unity = gain_is_unity();
         const uint32_t g = gain_q16();
         const size_t total = pairs * 2; /* 采样点总数 */
+
+        /* FFT / 波形旁路：在音量缩放之前交出本批原始 PCM（零拷贝） */
+        tap_pcm(pcm, pairs, sb);
 
         /* 一次性诊断：确认 int32 域收到的数据形状与数值范围 */
         static bool diag_done = false;
@@ -526,6 +536,29 @@ public:
     }
 
 private:
+    /**
+     * @brief 把一批原始 PCM 交给 FFT / 波形旁路回调。
+     *
+     * @param pcm      解码器输出的 int32 采样点（左对齐）
+     * @param frames   帧数（每帧含 cur_channels 个采样点）
+     * @param src_bits 有效位深 16/24/32
+     *
+     * 在音量缩放之前调用：可视化幅度不受用户音量影响，与旧实现
+     * （ESP8266Audio 的 ConsumeSample 回调）语义一致。未注册回调时零开销。
+     */
+    void tap_pcm(const int32_t *pcm, size_t frames, uint8_t src_bits)
+    {
+        if (pcm_cb_ == nullptr || pcm == nullptr || frames == 0) {
+            return;
+        }
+        espaudiocore_pcm_t info = {};
+        info.samples  = pcm;
+        info.frames   = frames;
+        info.rate     = cur_rate;
+        info.channels = cur_channels ? cur_channels : 2;
+        info.bits     = src_bits ? src_bits : (cur_bits ? cur_bits : 16);
+        pcm_cb_(pcm_user_, &info);
+    }
 
 #if defined(CONFIG_ESPAUDIOCORE_DEBUG_DIAGNOSTICS)
     /**
@@ -589,6 +622,9 @@ private:
     uint8_t                cur_hw_bits = 0;   /**< 当前硬件槽宽 */
     const volatile bool   *stop_flag_ = nullptr;
 
+    espaudiocore_pcm_cb_t  pcm_cb_ = nullptr; /**< FFT / 波形旁路回调 */
+    void                  *pcm_user_ = nullptr; /**< 旁路回调 user 指针 */
+
     /** 一轮写能处理的样本数上限；三块缓冲都按它分配 */
     static const size_t CONV_SAMPLES = 8192;
 
@@ -640,6 +676,15 @@ void audio_sink_i2s_bind_stop(AudioSink *sink, const volatile bool *flag)
     AudioSinkI2s *i2s = static_cast<AudioSinkI2s *>(sink);
     if (i2s) {
         i2s->set_stop_flag(flag);
+    }
+}
+
+/* 供 audio_player 绑定 FFT / 波形 PCM 旁路回调 */
+void audio_sink_i2s_set_pcm(AudioSink *sink, espaudiocore_pcm_cb_t cb, void *user)
+{
+    AudioSinkI2s *i2s = static_cast<AudioSinkI2s *>(sink);
+    if (i2s) {
+        i2s->set_pcm_callback(cb, user);
     }
 }
 

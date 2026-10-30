@@ -251,17 +251,7 @@ private:
         {
             return FLAC__STREAM_DECODER_READ_STATUS_ABORT;
         }
-        /*
-         * ★ 2026-10 修（真机 96k/24bit FLAC 卡顿的 P0 怀疑点）：
-         *   原实现"read() 拿不到数据就立刻当流结束" ✗ —— 本地文件走
-         *   `AudioSourceFs::read()`（返回 fread 的短读计数），SD/FATFS 一次抖动
-         *   返回 0 就会被 libFLAC 当成**文件结束** ✗，随后它
-         *   `Rewinding, seeking necessary` 回退重找同步、再失败 —— 真机日志里
-         *   每秒刷十几条 `FLAC error: …_LOST_SYNC`，CPU 白烧、听感持续卡顿 ✓。
-         *
-         *   所以先**重试三次**再判定结束；同时把 读调用/短读/零读 计数留给
-         *   decode() 失败时打印（一次日志就能区分"SD 短读"和"文件本身坏"）。
-         */
+
         int n = 0;
         for (int attempt = 0; attempt < 3; attempt++)
         {
@@ -545,17 +535,6 @@ private:
         }
     }
 
-    /*
-     * ★ 2026-10 改：错误回调**不能只打印** ✗。
-     *
-     *   libFLAC 遇到 LOST_SYNC / OUT_OF_BOUNDS 会自己 "Rewinding, seeking necessary"
-     *   回退重找同步，然后**再次**失败 —— 真机日志里每秒十几条、CPU 白烧、听感持续
-     *   卡顿，而外层完全看不出"这个文件其实解不出来" ✗。
-     *
-     *   现在：计数 + 只打前 5 条（带 libFLAC 的解码位置，用来判断是不是固定偏移出错）
-     *   + **连续**错误达 kMaxErrStreak 就置 err_fatal_，由 decode() 返回解码错误 ⇒
-     *   上层走"这个文件解不出来，已跳过"（music_tick 的本地看门狗/跳过逻辑已能接）。
-     */
     static void error_cb(const FLAC__StreamDecoder *d, FLAC__StreamDecoderErrorStatus status,
                          void *ctx)
     {

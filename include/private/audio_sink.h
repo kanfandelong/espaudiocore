@@ -31,6 +31,14 @@ AudioSink *audio_sink_i2s_create(i2s_chan_handle_t tx, uint32_t io_timeout_ms, u
 /** 绑定停止标志：write() 的等待会被它打断（见 D-14） */
 void audio_sink_i2s_bind_stop(AudioSink *sink, const volatile bool *flag);
 
+/**
+ * @brief 绑定 PCM 旁路回调（FFT / 波形取数）。
+ *
+ * 回调在写 I2S 之前、音量缩放之前触发，数据为左对齐到 32 位的 int32。
+ * 只在 I2S 输出汇上提供；ringbuf 输出本身已把 PCM 交给应用。
+ */
+void audio_sink_i2s_set_pcm(AudioSink *sink, espaudiocore_pcm_cb_t cb, void *user);
+
 /** I2S DMA 队列内尚未播出的字节数（用于位置查询扣除） */
 size_t audio_sink_i2s_pending_bytes(AudioSink *sink);
 
