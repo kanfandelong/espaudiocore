@@ -30,6 +30,7 @@ ESP-IDF-native **unified multi-decoder wrapper library**: one call starts playba
 | OGG Vorbis | `.ogg` | libvorbis + libogg | ✅ | ❌ | — |
 | Opus | `.opus` | libopus + opusfile | ✅ | ❌ | — |
 | WavPack | `.wv / .wvc` | libwavpack | ✅ | ✅ | 16/24, float32 |
+| M4A | `.m4a` | libhelix-aac + ffbase + avpack | ✅ | not test | — |
 
 > ringbuf cannot be used for Vorbis / Opus: their container libraries require a seekable source, so the call returns
 > `ESP_ERR_NOT_SUPPORTED` instead of failing silently.

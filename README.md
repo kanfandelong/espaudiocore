@@ -31,6 +31,7 @@ ESP-IDF 原生的**多解码器统一封装库**：一次调用即开始播放�
 | OGG Vorbis | `.ogg` | libvorbis + libogg | ✅ | ❌ | — |
 | Opus | `.opus` | libopus + opusfile | ✅ | ❌ | — |
 | WavPack | `.wv / .wvc` | libwavpack | ✅ | ✅ | 16/24、float32 |
+| M4A | `.m4a` | libhelix-aac + ffbase + avpack | ✅ | 未测试 | — |
 
 > ringbuf 不能用于 Vorbis / Opus：其封装库要求可 seek 的源，调用会返回
 > `ESP_ERR_NOT_SUPPORTED`，不会静默失败。
