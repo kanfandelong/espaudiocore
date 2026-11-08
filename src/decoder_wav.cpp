@@ -11,6 +11,7 @@
 #include "audio_port.h"
 #include "audio_types.h"
 #include "decoder.h"
+#include "audio_downmix.h"
 
 #include <new>
 #include <stdlib.h>
@@ -81,7 +82,8 @@ public:
             off += 8 + csize + (csize & 1); /* chunk 按偶数字节对齐 */
         }
 
-        if (!have_fmt || data_bytes_ == 0 || channels_ == 0 || rate_ == 0 || bits_ == 0) {
+        if (!have_fmt || data_bytes_ == 0 || channels_ == 0 || channels_ > 8 ||
+            rate_ == 0 || bits_ == 0) {
             if (dec_err) {
                 *dec_err = AUDIO_DEC_ERR_PARSE;
             }
@@ -289,23 +291,59 @@ private:
     /** 把输入 PCM 归一化成 16-bit 交错立体声 */
     void make_samples(const uint8_t *src, size_t frames, int16_t *dst)
     {
-        for (size_t i = 0; i < frames; i++) {
-            int16_t l = 0;
-            int16_t r = 0;
-            const uint8_t *p = src + i * bytes_per_frame_in_;
-            for (uint8_t c = 0; c < channels_ && c < 2; c++) {
-                int16_t v = convert_one(p + (size_t)c * (bits_ / 8u));
-                if (c == 0) {
-                    l = v;
-                } else {
-                    r = v;
+        if (channels_ <= 2)
+        {
+            for (size_t i = 0; i < frames; i++)
+            {
+                int16_t l = 0;
+                int16_t r = 0;
+                const uint8_t *p = src + i * bytes_per_frame_in_;
+                for (uint8_t c = 0; c < channels_; c++)
+                {
+                    int16_t v = convert_one(p + (size_t)c * (bits_ / 8u));
+                    if (c == 0)
+                        l = v;
+                    else
+                        r = v;
                 }
+                if (channels_ == 1)
+                    r = l;
+                dst[i * 2 + 0] = l;
+                dst[i * 2 + 1] = r;
             }
-            if (channels_ == 1) {
-                r = l;
+            return;
+        }
+
+        int wl[8], wr[8];
+        if (!audio_downmix_coeffs(channels_, wl, wr))
+        {
+            memset(dst, 0, frames * 2 * sizeof(int16_t));
+            return;
+        }
+        int sum_l = 0, sum_r = 0;
+        for (uint8_t c = 0; c < channels_; ++c)
+        {
+            sum_l += wl[c];
+            sum_r += wr[c];
+        }
+        for (size_t i = 0; i < frames; i++)
+        {
+            int64_t l = 0, r = 0;
+            const uint8_t *p = src + i * bytes_per_frame_in_;
+            for (uint8_t c = 0; c < channels_; ++c)
+            {
+                int64_t v = convert_one(p + (size_t)c * (bits_ / 8u));
+                l += v * wl[c];
+                r += v * wr[c];
             }
-            dst[i * 2 + 0] = l;
-            dst[i * 2 + 1] = r;
+            int32_t li = audio_downmix_clamp_i32(l / (sum_l ? sum_l : 1000));
+            int32_t ri = audio_downmix_clamp_i32(r / (sum_r ? sum_r : 1000));
+            if (li > 32767) li = 32767;
+            if (li < -32768) li = -32768;
+            if (ri > 32767) ri = 32767;
+            if (ri < -32768) ri = -32768;
+            dst[i * 2 + 0] = (int16_t)li;
+            dst[i * 2 + 1] = (int16_t)ri;
         }
     }
 
@@ -348,23 +386,53 @@ private:
     /** 把输入 PCM 转成 int32（有效数据对齐到高位），保留 24/32-bit 精度 */
     void make_samples_i32(const uint8_t *src, size_t frames, int32_t *dst)
     {
-        for (size_t i = 0; i < frames; i++) {
-            int32_t l = 0;
-            int32_t r = 0;
-            const uint8_t *p = src + i * bytes_per_frame_in_;
-            for (uint8_t c = 0; c < channels_ && c < 2; c++) {
-                int32_t v = convert_one_i32(p + (size_t)c * (bits_ / 8u));
-                if (c == 0) {
-                    l = v;
-                } else {
-                    r = v;
+        if (channels_ <= 2)
+        {
+            for (size_t i = 0; i < frames; i++)
+            {
+                int32_t l = 0;
+                int32_t r = 0;
+                const uint8_t *p = src + i * bytes_per_frame_in_;
+                for (uint8_t c = 0; c < channels_; c++)
+                {
+                    int32_t v = convert_one_i32(p + (size_t)c * (bits_ / 8u));
+                    if (c == 0)
+                        l = v;
+                    else
+                        r = v;
                 }
+                if (channels_ == 1)
+                    r = l;
+                dst[i * 2 + 0] = l;
+                dst[i * 2 + 1] = r;
             }
-            if (channels_ == 1) {
-                r = l;
+            return;
+        }
+
+        int wl[8], wr[8];
+        if (!audio_downmix_coeffs(channels_, wl, wr))
+        {
+            memset(dst, 0, frames * 2 * sizeof(int32_t));
+            return;
+        }
+        int sum_l = 0, sum_r = 0;
+        for (uint8_t c = 0; c < channels_; ++c)
+        {
+            sum_l += wl[c];
+            sum_r += wr[c];
+        }
+        for (size_t i = 0; i < frames; i++)
+        {
+            int64_t l = 0, r = 0;
+            const uint8_t *p = src + i * bytes_per_frame_in_;
+            for (uint8_t c = 0; c < channels_; ++c)
+            {
+                int64_t v = convert_one_i32(p + (size_t)c * (bits_ / 8u));
+                l += v * wl[c];
+                r += v * wr[c];
             }
-            dst[i * 2 + 0] = l;
-            dst[i * 2 + 1] = r;
+            dst[i * 2 + 0] = audio_downmix_clamp_i32(l / (sum_l ? sum_l : 1000));
+            dst[i * 2 + 1] = audio_downmix_clamp_i32(r / (sum_r ? sum_r : 1000));
         }
     }
 

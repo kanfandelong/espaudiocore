@@ -130,6 +130,7 @@ typedef struct {
     float    volume_db;     /* 初始音量（dB），0 = 原始幅度 */
     espaudiocore_event_cb_t on_event; /* 可为 NULL */
     espaudiocore_meta_cb_t  on_meta;  /* 可为 NULL */
+    espaudiocore_pcm_cb_t   on_pcm;   /* 可为 NULL；仅 I2S 输出生效 */
     void                   *user;     /* 回调 user 指针 */
 } espaudiocore_cfg_t;
 ```
@@ -142,6 +143,10 @@ typedef struct {
 | `io_timeout_ms` | `0` = 无限等待。阻塞点均可被 `stop()` 唤醒，推荐保持 `0` |
 | `output_bits` | **两种模式**：`0` 跟随 PCM 位宽、不做处理；`16/24/32` 固定位宽，源位宽更窄则左移补齐、更宽则右移截断。例：PCM5102 这类固定 32-bit 槽宽的 DAC 填 `32`，16-bit 源会被左移 16 位 |
 | `volume_db` | 见 [`espaudiocore_set_volume_db()`](#36-espaudiocore_set_volume_db) |
+| `on_event` | 播放事件回调，可为 `NULL` |
+| `on_meta` | 元数据回调，可为 `NULL` |
+| `on_pcm` | **PCM 旁路回调**（FFT / 波形取数），可为 `NULL`；仅 I2S 输出生效。见 [2.8](#28-espaudiocore_pcm_t--pcm-旁路回调) |
+| `user` | 原样回传给所有回调 |
 
 整个结构可零初始化（`= {}`），未设字段取默认值。传 `NULL` 等同于全默认。
 

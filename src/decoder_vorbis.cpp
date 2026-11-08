@@ -13,6 +13,7 @@
 #include "audio_port.h"
 #include "audio_types.h"
 #include "decoder.h"
+#include "audio_downmix.h"
 
 #include <new>
 #include <stdlib.h>
@@ -87,8 +88,8 @@ public:
         opened_ = true;
 
         vorbis_info *vi = ov_info(vf_, -1);
-        if (!vi || vi->channels <= 0 || vi->rate <= 0) {
-            AUDIO_LOGE("ov_info failed");
+        if (!vi || vi->channels <= 0 || vi->rate <= 0 || vi->channels > 8) {
+            AUDIO_LOGE("ov_info failed or unsupported channels=%d", vi ? vi->channels : -1);
             if (dec_err) {
                 *dec_err = AUDIO_DEC_ERR_PARSE;
             }
@@ -96,8 +97,10 @@ public:
             return AUDIO_ERR_PARSE;
         }
 
+        src_channels_ = (uint8_t)vi->channels;
         fmt_.rate     = (uint32_t)vi->rate;
-        fmt_.channels = (uint8_t)vi->channels;
+        /* Writer always emits stereo, including multichannel downmix. */
+        fmt_.channels = 2;
         fmt_.bits     = 16;
 
         /* 时长：优先用 ov_time_total（毫秒） */
@@ -158,8 +161,13 @@ public:
             return AUDIO_ERR_DECODE;
         }
 
-        /* ret 是字节数；声道数可能随链接变化，按当前值切整帧 */
-        size_t frame_bytes = (size_t)fmt_.channels * sizeof(int16_t);
+        /* 当前链路的源声道数可能变化，按当前值切整帧 */
+        vorbis_info *vi = ov_info(vf_, -1);
+        unsigned src_ch = vi && vi->channels > 0 && vi->channels <= 8
+                              ? (unsigned)vi->channels
+                              : (unsigned)src_channels_;
+        src_channels_ = (uint8_t)src_ch;
+        size_t frame_bytes = (size_t)src_ch * sizeof(int16_t);
         if (frame_bytes == 0) {
             return AUDIO_ERR_DECODE;
         }
@@ -171,19 +179,45 @@ public:
         /* 统一 int32 域：Tremor 输出 int16，这里对齐成 int32（<<16），
          * 之后由 sink 在 int32 域做音量缩放与位宽输出（见 D-23）。 */
         const size_t nsamp = bytes / sizeof(int16_t);
-        if (nsamp > VORBIS_I32_CAP) {
-            /* 容量保护：本不该发生（ov_read 受 OGG_READ_BYTES 限制） */
+        const size_t frames = nsamp / src_ch;
+        if (frames * 2 > VORBIS_I32_CAP) {
             return AUDIO_ERR_IO;
         }
-        for (size_t i = 0; i < nsamp; i++) {
-            pcm32_[i] = (int32_t)pcm_[i] << 16;
-        }
-        const size_t pairs = nsamp / (fmt_.channels ? fmt_.channels : 2);
 
-        int rc = out_->write_i32(pcm32_, pairs, 16, 0);
+        if (src_ch <= 2) {
+            for (size_t i = 0; i < frames; i++) {
+                int32_t l = (int32_t)pcm_[i * src_ch] << 16;
+                int32_t r = (src_ch == 1) ? l : ((int32_t)pcm_[i * src_ch + 1] << 16);
+                pcm32_[i * 2 + 0] = l;
+                pcm32_[i * 2 + 1] = r;
+            }
+        } else {
+            int wl[8], wr[8];
+            if (!audio_downmix_coeffs(src_ch, wl, wr)) {
+                return AUDIO_ERR_DECODE;
+            }
+            int sum_l = 0, sum_r = 0;
+            for (unsigned c = 0; c < src_ch; ++c) {
+                sum_l += wl[c];
+                sum_r += wr[c];
+            }
+            for (size_t i = 0; i < frames; i++) {
+                int64_t l = 0, r = 0;
+                for (unsigned c = 0; c < src_ch; ++c) {
+                    int64_t v = (int64_t)pcm_[i * src_ch + c] << 16;
+                    l += v * wl[c];
+                    r += v * wr[c];
+                }
+                pcm32_[i * 2 + 0] = audio_downmix_clamp_i32(l / (sum_l ? sum_l : 1000));
+                pcm32_[i * 2 + 1] = audio_downmix_clamp_i32(r / (sum_r ? sum_r : 1000));
+            }
+        }
+
+        int rc = out_->write_i32(pcm32_, frames, 16, 0);
         if (rc == AUDIO_ERR_NOT_SUPPORTED) {
-            /* sink 不支持统一路径：退回原字节接口 */
-            rc = out_->write(pcm_, bytes, 0);
+            /* sink 不支持统一路径：退回原字节接口（仅双声道） */
+            if (src_ch <= 2)
+                rc = out_->write(pcm_, frames * 2 * sizeof(int16_t), 0);
         }
         if (rc == AUDIO_ERR_NOT_SUPPORTED) {
             state_ = AUDIO_DEC_STATE_EOS;
@@ -340,6 +374,7 @@ private:
     bool                   opened_ = false;
     int16_t               *pcm_ = nullptr;
     int32_t               *pcm32_ = nullptr; /**< 统一 int32 域中间缓冲 */
+    uint8_t                src_channels_ = 2;
     espaudiocore_meta_cb_t meta_cb_ = nullptr;
     void                  *meta_user_ = nullptr;
     int64_t                duration_hint_ms_ = -1;

@@ -12,6 +12,7 @@
 #include "audio_source.h"
 #include "audio_types.h"
 #include "decoder.h"
+#include "audio_downmix.h"
 
 #include <new>
 #include <stdio.h>
@@ -122,7 +123,7 @@ public:
 		fmt_.rate = WavpackGetSampleRate(wpc_);
 		fmt_.channels = 2;
 		fmt_.bits = (uint8_t)((src_bits_ <= 16) ? 16 : src_bits_);
-		if (src_bits_ < 1 || src_bits_ > 32 || channels_ < 1 || channels_ > 2 || !fmt_.rate) {
+		if (src_bits_ < 1 || src_bits_ > 32 || channels_ < 1 || channels_ > 8 || !fmt_.rate) {
 			AUDIO_LOGE("WavPack has unsupported format: %d bits, %d channels, %u Hz",
 					   src_bits_, channels_, (unsigned)fmt_.rate);
 			if (dec_err) {
@@ -178,13 +179,37 @@ public:
 
 		const unsigned shift = 32u - (unsigned)src_bits_;
 		const int64_t scale = (int64_t)1 << shift;
-		for (uint32_t i = 0; i < frames; ++i) {
-			for (int ch = 0; ch < channels_; ++ch) {
-				int32_t value = (int32_t)((int64_t)sample_buf_[i * channels_ + ch] * scale);
-				pcm32_[i * 2 + ch] = value;
-				if (channels_ == 1) {
-					pcm32_[i * 2 + 1] = value;
+		if (channels_ <= 2) {
+			for (uint32_t i = 0; i < frames; ++i) {
+				for (int ch = 0; ch < channels_; ++ch) {
+					int32_t value = (int32_t)((int64_t)sample_buf_[i * channels_ + ch] * scale);
+					pcm32_[i * 2 + ch] = value;
+					if (channels_ == 1) {
+						pcm32_[i * 2 + 1] = value;
+					}
 				}
+			}
+		} else {
+			int wl[8], wr[8];
+			if (!audio_downmix_coeffs((unsigned)channels_, wl, wr)) {
+				state_ = AUDIO_DEC_STATE_ERROR;
+				last_error_ = AUDIO_ERR_DECODE;
+				return AUDIO_ERR_DECODE;
+			}
+			int sum_l = 0, sum_r = 0;
+			for (int ch = 0; ch < channels_; ++ch) {
+				sum_l += wl[ch];
+				sum_r += wr[ch];
+			}
+			for (uint32_t i = 0; i < frames; ++i) {
+				int64_t l = 0, r = 0;
+				for (int ch = 0; ch < channels_; ++ch) {
+					int64_t value = (int64_t)sample_buf_[i * channels_ + ch] * scale;
+					l += value * wl[ch];
+					r += value * wr[ch];
+				}
+				pcm32_[i * 2 + 0] = audio_downmix_clamp_i32(l / (sum_l ? sum_l : 1000));
+				pcm32_[i * 2 + 1] = audio_downmix_clamp_i32(r / (sum_r ? sum_r : 1000));
 			}
 		}
 

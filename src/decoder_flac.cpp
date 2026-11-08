@@ -137,8 +137,8 @@ public:
         }
 
         state_ = AUDIO_DEC_STATE_ACTIVE;
-        AUDIO_LOGI("FLAC: %u Hz, %u ch, src %u-bit -> reported %u-bit%s", (unsigned)fmt_.rate,
-                   (unsigned)fmt_.channels, (unsigned)src_bits_, (unsigned)fmt_.bits,
+        AUDIO_LOGI("FLAC: %u Hz, %u ch -> stereo, src %u-bit -> reported %u-bit%s", (unsigned)fmt_.rate,
+                   (unsigned)src_channels_, (unsigned)src_bits_, (unsigned)fmt_.bits,
                    (fmt_.bits > 16) ? " (high-res preserved)" : "");
         return AUDIO_OK;
     }
@@ -403,12 +403,83 @@ private:
                 dst[i * 2 + 1] = v;
             }
         }
-        else
+        else if (channels == 2)
         {
             for (unsigned i = 0; i < blocksize; i++)
             {
                 dst[i * 2 + 0] = buffer[0][i] << sh;
                 dst[i * 2 + 1] = buffer[1][i] << sh;
+            }
+        }
+        else
+        {
+            /* FLAC 3..8 声道简单下混到立体声。
+             * 权重单位为 1/1000；按每侧权重和归一化，避免简单求和削顶。
+             * 典型布局：
+             *   3: FL FR FC
+             *   4: FL FR BL BR
+             *   5: FL FR FC BL BR
+             *   6: FL FR FC LFE BL BR
+             *   7: FL FR FC LFE BC SL SR
+             *   8: FL FR FC LFE BL BR SL SR
+             */
+            int wl[FLAC_MAX_CH] = {0};
+            int wr[FLAC_MAX_CH] = {0};
+            switch (channels)
+            {
+            case 3:
+                wl[0] = 1000; wl[2] = 707;
+                wr[1] = 1000; wr[2] = 707;
+                break;
+            case 4:
+                wl[0] = 1000; wl[2] = 707;
+                wr[1] = 1000; wr[3] = 707;
+                break;
+            case 5:
+                wl[0] = 1000; wl[2] = 707; wl[3] = 707;
+                wr[1] = 1000; wr[2] = 707; wr[4] = 707;
+                break;
+            case 6:
+                wl[0] = 1000; wl[2] = 707; wl[3] = 500; wl[4] = 707;
+                wr[1] = 1000; wr[2] = 707; wr[3] = 500; wr[5] = 707;
+                break;
+            case 7:
+                wl[0] = 1000; wl[2] = 707; wl[3] = 500; wl[4] = 707; wl[5] = 707;
+                wr[1] = 1000; wr[2] = 707; wr[3] = 500; wr[4] = 707; wr[6] = 707;
+                break;
+            case 8:
+                wl[0] = 1000; wl[2] = 707; wl[3] = 500; wl[4] = 707; wl[6] = 707;
+                wr[1] = 1000; wr[2] = 707; wr[3] = 500; wr[5] = 707; wr[7] = 707;
+                break;
+            default:
+                break;
+            }
+            int sum_l = 0, sum_r = 0;
+            for (unsigned c = 0; c < channels; c++)
+            {
+                sum_l += wl[c];
+                sum_r += wr[c];
+            }
+            if (sum_l <= 0) sum_l = 1000;
+            if (sum_r <= 0) sum_r = 1000;
+
+            for (unsigned i = 0; i < blocksize; i++)
+            {
+                int64_t left = 0, right = 0;
+                for (unsigned c = 0; c < channels; c++)
+                {
+                    int64_t s = (int64_t)buffer[c][i] << sh;
+                    left += s * wl[c];
+                    right += s * wr[c];
+                }
+                left /= sum_l;
+                right /= sum_r;
+                if (left > 2147483647LL) left = 2147483647LL;
+                if (left < -2147483648LL) left = -2147483648LL;
+                if (right > 2147483647LL) right = 2147483647LL;
+                if (right < -2147483648LL) right = -2147483648LL;
+                dst[i * 2 + 0] = (int32_t)left;
+                dst[i * 2 + 1] = (int32_t)right;
             }
         }
 
@@ -464,7 +535,9 @@ private:
         {
             const FLAC__StreamMetadata_StreamInfo &si = meta->data.stream_info;
             self->fmt_.rate = si.sample_rate;
-            self->fmt_.channels = (uint8_t)si.channels;
+            self->src_channels_ = (uint8_t)si.channels;
+            /* Writer always produces interleaved stereo. */
+            self->fmt_.channels = 2;
             self->src_bits_ = (uint8_t)si.bits_per_sample;
             if (si.sample_rate && si.total_samples)
             {
@@ -579,6 +652,7 @@ private:
     void *meta_user_ = nullptr;
 
     uint8_t src_bits_ = 16;
+    uint8_t src_channels_ = 2;
     bool aborted_ = false;
     int64_t duration_hint_ms_ = -1;
 
