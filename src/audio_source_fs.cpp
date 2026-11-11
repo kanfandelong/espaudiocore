@@ -9,37 +9,54 @@
  */
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <new>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #include "audio_port.h"
 #include "audio_source.h"
 #include "sdkconfig.h"
 
-/* 模式选择：Kconfig 是默认来源；也允许用编译定义强制覆盖，
- * 便于一次构建里对照验证两条路径（见组件 CMakeLists 的 *_VFS_TEST 选项）。 */
-#if defined(ESPAUDIOCORE_FORCE_FILE_SOURCE_VFS)
-#define FS_USE_VFS 1
+/*
+ * 三种文件源模式，互斥：
+ *   FS_USE_C_FILE = 1  : stdio + setvbuf（PSRAM 优先）
+ *   FS_USE_POSIX  = 1  : 直接 POSIX open/read/lseek/close
+ *   两者均为 0         : 自管理窗口（read-ahead buffer）
+ */
+#if defined(ESPAUDIOCORE_FORCE_FILE_SOURCE_C_FILE)
+#define FS_USE_C_FILE 1
+#define FS_USE_POSIX  0
+#elif defined(ESPAUDIOCORE_FORCE_FILE_SOURCE_POSIX)
+#define FS_USE_C_FILE 0
+#define FS_USE_POSIX  1
 #elif defined(ESPAUDIOCORE_FORCE_FILE_SOURCE_WINDOW)
-#define FS_USE_VFS 0
-#elif defined(CONFIG_ESPAUDIOCORE_FILE_SOURCE_VFS)
-#define FS_USE_VFS 1
+#define FS_USE_C_FILE 0
+#define FS_USE_POSIX  0
+#elif defined(CONFIG_ESPAUDIOCORE_FILE_SOURCE_C_FILE)
+#define FS_USE_C_FILE 1
+#define FS_USE_POSIX  0
+#elif defined(CONFIG_ESPAUDIOCORE_FILE_SOURCE_POSIX)
+#define FS_USE_C_FILE 0
+#define FS_USE_POSIX  1
 #else
-#define FS_USE_VFS 0
+#define FS_USE_C_FILE 0
+#define FS_USE_POSIX  0
 #endif
 
 #ifndef CONFIG_ESPAUDIOCORE_SOURCE_BUFFER_SIZE
 #define CONFIG_ESPAUDIOCORE_SOURCE_BUFFER_SIZE 32768
 #endif
-#ifndef CONFIG_ESPAUDIOCORE_VFS_BUFFER_SIZE
-#define CONFIG_ESPAUDIOCORE_VFS_BUFFER_SIZE 65536
+#ifndef CONFIG_ESPAUDIOCORE_C_FILE_BUFFER_SIZE
+#define CONFIG_ESPAUDIOCORE_C_FILE_BUFFER_SIZE 65536
 #endif
 
 #define WIN_BUF_SIZE ((size_t)CONFIG_ESPAUDIOCORE_SOURCE_BUFFER_SIZE)
-#define VFS_BUF_SIZE ((size_t)CONFIG_ESPAUDIOCORE_VFS_BUFFER_SIZE)
+#define C_FILE_BUF_SIZE ((size_t)CONFIG_ESPAUDIOCORE_C_FILE_BUFFER_SIZE)
 
 class AudioSourceFs : public AudioInput {
 public:
@@ -55,37 +72,45 @@ public:
             return false;
         }
 
-        fp_ = fopen(path, "rb");
-        if (!fp_) {
-            AUDIO_LOGE("fopen failed: %s (errno=%d)", path, errno);
-            return false;
-        }
-
         size_t path_len = strlen(path);
         path_copy_ = (char *)malloc(path_len + 1);
         if (!path_copy_) {
-            fclose(fp_);
-            fp_ = nullptr;
             return false;
         }
         memcpy(path_copy_, path, path_len + 1);
         this->path = path_copy_;
 
-#if FS_USE_VFS
-        /* 纯 VFS 模式：把 stdio 自己的缓冲指到 PSRAM，不做自管理窗口。
-         * 必须在任何其它 I/O 之前设置。缓冲由我们 free，不借给 stdio 释放。 */
-        size_t want = VFS_BUF_SIZE;
-        vfs_buf_ = (char *)audio_alloc_big(want, 0);
-        if (!vfs_buf_) {
-            AUDIO_LOGE("no memory for %u-byte setvbuf buffer", (unsigned)want);
-            fclose(fp_);
-            fp_ = nullptr;
+#if FS_USE_POSIX
+        /* 纯 POSIX 模式：直接拿 fd，不做用户态缓冲。 */
+        fd_ = ::open(path, O_RDONLY);
+        if (fd_ < 0) {
+            AUDIO_LOGE("open failed: %s (errno=%d)", path, errno);
+            close();
             return false;
         }
-        if (setvbuf(fp_, vfs_buf_, _IOFBF, want) != 0) {
+        AUDIO_LOGD("file source: POSIX mode (direct syscalls)");
+#else
+        fp_ = fopen(path, "rb");
+        if (!fp_) {
+            AUDIO_LOGE("fopen failed: %s (errno=%d)", path, errno);
+            close();
+            return false;
+        }
+
+#if FS_USE_C_FILE
+        /* 纯 VFS 模式：把 stdio 自己的缓冲指到 PSRAM，不做自管理窗口。
+         * 必须在任何其它 I/O 之前设置。缓冲由我们 free，不借给 stdio 释放。 */
+        size_t want = C_FILE_BUF_SIZE;
+        c_file_buf_ = (char *)audio_alloc_big(want, 0);
+        if (!c_file_buf_) {
+            AUDIO_LOGE("no memory for %u-byte setvbuf buffer", (unsigned)want);
+            close();
+            return false;
+        }
+        if (setvbuf(fp_, c_file_buf_, _IOFBF, want) != 0) {
             AUDIO_LOGW("setvbuf failed, falling back to default stdio buffer");
-            audio_free(vfs_buf_);
-            vfs_buf_ = nullptr;
+            audio_free(c_file_buf_);
+            c_file_buf_ = nullptr;
         } else {
             AUDIO_LOGD("file source: VFS mode, setvbuf %u bytes (PSRAM preferred)",
                        (unsigned)want);
@@ -96,24 +121,28 @@ public:
         buf_ = (uint8_t *)audio_alloc_big(want, 0);
         if (!buf_) {
             AUDIO_LOGE("no memory for %u-byte read-ahead buffer", (unsigned)want);
-            fclose(fp_);
-            fp_ = nullptr;
+            close();
             return false;
         }
         cap_ = want;
         setvbuf(fp_, nullptr, _IONBF, 0);
         AUDIO_LOGD("file source: window mode, %u bytes", (unsigned)want);
 #endif
+#endif /* FS_USE_POSIX */
 
         /* 一次性取大小，避免每次 size() 都 seek 到结尾 */
         struct stat st;
+#if FS_USE_POSIX
+        if (fstat(fd_, &st) == 0) {
+#else
         if (fstat(fileno(fp_), &st) == 0) {
+#endif
             size_ = (int64_t)st.st_size;
         } else {
             size_ = -1;
         }
 
-#if !FS_USE_VFS
+#if !FS_USE_C_FILE && !FS_USE_POSIX
         /* 预读第一窗，让 probe/ID3 立刻可用 */
         (void)refill();
 #endif
@@ -122,6 +151,12 @@ public:
 
     void close()
     {
+#if FS_USE_POSIX
+        if (fd_ >= 0) {
+            ::close(fd_);
+            fd_ = -1;
+        }
+#endif
         if (fp_) {
             fclose(fp_);
             fp_ = nullptr;
@@ -130,10 +165,10 @@ public:
             audio_free(buf_);
             buf_ = nullptr;
         }
-        if (vfs_buf_) {
+        if (c_file_buf_) {
             /* fclose 已完成，此时才能释放 setvbuf 的缓冲 */
-            audio_free(vfs_buf_);
-            vfs_buf_ = nullptr;
+            audio_free(c_file_buf_);
+            c_file_buf_ = nullptr;
         }
         if (path_copy_) {
             this->path = nullptr;
@@ -149,7 +184,31 @@ public:
 
     int read(void *dst, size_t want) override
     {
-#if FS_USE_VFS
+#if FS_USE_POSIX
+        if (fd_ < 0) {
+            return -1;
+        }
+        size_t total = 0;
+        while (total < want) {
+            ssize_t n = ::read(fd_, (char *)dst + total, want - total);
+            if (n < 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                AUDIO_LOGE("read error (errno=%d)", errno);
+                if (total == 0) {
+                    return -1;
+                }
+                break;
+            }
+            if (n == 0) {
+                break; /* EOF */
+            }
+            total += (size_t)n;
+        }
+        consumed_ += (int64_t)total;
+        return (int)total;
+#elif FS_USE_C_FILE
         if (!fp_) {
             return -1;
         }
@@ -195,7 +254,34 @@ public:
      */
     int peek(void *dst, size_t want, size_t need) override
     {
-#if FS_USE_VFS
+#if FS_USE_POSIX
+        (void)need;
+        if (fd_ < 0) {
+            return -1;
+        }
+        /* 保存当前位置 -> 读满 want -> 复位。
+         * 普通文件通常一次读满，循环仅为 EINTR/短读兜底。 */
+        off_t here = lseek(fd_, 0, SEEK_CUR);
+        if (here < 0) {
+            return -1;
+        }
+        size_t total = 0;
+        while (total < want) {
+            ssize_t n = ::read(fd_, (char *)dst + total, want - total);
+            if (n < 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                break;
+            }
+            if (n == 0) {
+                break;
+            }
+            total += (size_t)n;
+        }
+        (void)lseek(fd_, here, SEEK_SET);
+        return (int)total;
+#elif FS_USE_C_FILE
         /* 纯 VFS 模式：保存位置 -> 读 -> 复位。
          * 底层就是同一个 stdio 缓冲，fseeko 到原位不会再触发真正的设备读。 */
         if (!fp_) {
@@ -243,11 +329,28 @@ public:
 
     bool can_seek() const override
     {
+#if FS_USE_POSIX
+        return fd_ >= 0;
+#else
         return fp_ != nullptr;
+#endif
     }
 
     int seek(int64_t pos, int whence) override
     {
+#if FS_USE_POSIX
+        if (fd_ < 0) {
+            return AUDIO_ERR_IO;
+        }
+        off_t np = lseek(fd_, (off_t)pos, whence);
+        if (np < 0) {
+            AUDIO_LOGE("lseek failed (pos=%lld whence=%d)", (long long)pos, whence);
+            return AUDIO_ERR_IO;
+        }
+        consumed_ = (int64_t)np;
+        eof_ = false;
+        return AUDIO_OK;
+#else
         if (!fp_) {
             return AUDIO_ERR_IO;
         }
@@ -260,11 +363,12 @@ public:
             return AUDIO_ERR_IO;
         }
         consumed_ = (int64_t)np;
-#if !FS_USE_VFS
+#if !FS_USE_C_FILE
         pos_ = len_ = 0;
 #endif
         eof_ = false;
         return AUDIO_OK;
+#endif
     }
 
     int64_t tell() override
@@ -284,6 +388,7 @@ public:
     }
 
 private:
+#if !FS_USE_C_FILE && !FS_USE_POSIX
     /**
      * @brief 把窗口填到至少 need 字节可用（若文件允许）。
      *
@@ -359,11 +464,13 @@ private:
         }
         return (int)got;
     }
+#endif
 
     FILE   *fp_ = nullptr;
+    int     fd_ = -1;            /**< POSIX 模式：文件描述符 */
     char   *path_copy_ = nullptr;
     uint8_t *buf_ = nullptr;       /**< WINDOW 模式：自管理窗口缓冲 */
-    char   *vfs_buf_ = nullptr;    /**< VFS 模式：setvbuf 的缓冲（PSRAM 优先） */
+    char   *c_file_buf_ = nullptr;    /**< C_FILE 模式：setvbuf 的缓冲（PSRAM 优先） */
     size_t  cap_ = 0;       /**< 窗口容量 */
     size_t  len_ = 0;       /**< 窗口内有效字节数 */
     size_t  pos_ = 0;       /**< 窗口内已消费位置 */

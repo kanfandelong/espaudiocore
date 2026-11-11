@@ -85,25 +85,32 @@ menu "espaudiocore"
 
     endmenu
 
-    menu "Memory"
+    menu "File"
+
         choice ESPAUDIOCORE_FILE_SOURCE_MODE
             prompt "File source read strategy"
-            default ESPAUDIOCORE_FILE_SOURCE_VFS
+            default ESPAUDIOCORE_FILE_SOURCE_POSIX
+
+            config ESPAUDIOCORE_FILE_SOURCE_C_FILE
+                bool "Pure C_FILE + setvbuf (PSRAM buffer)"
+                help
+                    使用C库文件操作函数。
+
+            config ESPAUDIOCORE_FILE_SOURCE_POSIX
+                bool "USE POSIX FILE API"
+                help
+                    使用标准POSIX文件操作函数。
 
             config ESPAUDIOCORE_FILE_SOURCE_WINDOW
                 bool "Self-managed window (default)"
                 help
-                    组件自己维护一个预读窗口，同时承担 peek（ID3/魔数探测）职责。
-                    优点：peek 不产生额外 seek；缺点：窗口边界逻辑较复杂。
+                    使用组件自维护预读窗口。
 
-            config ESPAUDIOCORE_FILE_SOURCE_VFS
-                bool "Pure VFS + setvbuf (PSRAM buffer)"
-                help
-                    直接用 stdio 的缓冲（用 setvbuf 指定大小与内存 caps），
-                    不再自管理窗口。peek 通过 fseeko/fread/fseeko 实现。
-                    代码路径更简单（少一层窗口状态机）；代价是每次 peek 多两次 seek。
-                    若怀疑窗口实现有问题，可切到这个模式做对照。
         endchoice
+
+    endmenu
+
+    menu "Memory"
 
         config ESPAUDIOCORE_MAX_ID3TAG_MEM_SIZE
             int "Max memory for ID3 tag parsing (KBytes)"
