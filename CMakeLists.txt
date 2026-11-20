@@ -1,57 +1,83 @@
-# espaudiocore —— ESP-IDF 组件构建脚本
+# espaudiocore -- native Linux build (CMake)
 #
-# 分层：
-#   src/*.c                     解码核心（路由、抽象、任务）—— 本项目自有代码
-#   src/port/*.c                平台适配层（日志/内存/pgmspace shim）
-#   lib/*                       第三方解码库 —— 原样保留，仅在本项目内编译
+# Layers:
+#   src/*.cpp              decoder core (routing, abstractions, player thread)
+#   src/audio_port.c       Linux platform layer (logging, aligned memory)
+#   lib/*                  vendored third-party decoders (compiled in-tree)
+#   compat/                legacy AVR/Arduino headers used by those libraries
 #
-# 注意：第三方库的 include 路径逐库隔离，避免同名头文件（config.h / config_types.h）
-#       互相串台。这也是不把 lib/ 做成独立组件的替代方案。
+# The ESP-IDF component build lives on the master branch. This branch is
+# Linux-only: pthreads, POSIX I/O and ALSA (dlopen, no ALSA headers needed).
 
-idf_build_get_property(target IDF_TARGET)
+cmake_minimum_required(VERSION 3.16)
+project(espaudiocore VERSION 2.0.0 LANGUAGES C CXX)
+
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+option(ESPAUDIOCORE_ENABLE_WAV     "Enable WAV (PCM) decoder"        ON)
+option(ESPAUDIOCORE_ENABLE_MP3     "Enable MP3 (libhelix-mp3)"       ON)
+option(ESPAUDIOCORE_ENABLE_AAC     "Enable AAC (libhelix-aac, SBR)"  ON)
+option(ESPAUDIOCORE_ENABLE_M4A     "Enable M4A (avpack + AAC)"       ON)
+option(ESPAUDIOCORE_ENABLE_FLAC    "Enable FLAC (libflac)"           ON)
+option(ESPAUDIOCORE_ENABLE_VORBIS  "Enable Ogg Vorbis (libvorbis)"   ON)
+option(ESPAUDIOCORE_ENABLE_OPUS    "Enable Opus (libopus + opusfile)" ON)
+option(ESPAUDIOCORE_ENABLE_WAVPACK "Enable WavPack (libwavpack)"     ON)
+option(ESPAUDIOCORE_BUILD_TOOLS    "Build the eac_play command line tool" ON)
+option(ESPAUDIOCORE_BUILD_TESTS    "Build the small self-test programs"   OFF)
+
+if(ESPAUDIOCORE_ENABLE_M4A AND NOT ESPAUDIOCORE_ENABLE_AAC)
+    message(FATAL_ERROR "M4A requires the AAC decoder; enable ESPAUDIOCORE_ENABLE_AAC or disable M4A")
+endif()
+
+find_package(Threads REQUIRED)
 
 # ---------------------------------------------------------------------------
-# 自有源码
+# Decoder core (always compiled; each decoder file self-gates on the macros)
 # ---------------------------------------------------------------------------
-set(srcs
-    "src/espaudiocore.cpp"
-    "src/audio_player.cpp"
-    "src/audio_decoder_route.cpp"
-    "src/audio_source_fs.cpp"
-    "src/audio_source_ringbuf.cpp"
-    "src/audio_sink_i2s.cpp"
-    "src/audio_sink_ringbuf.cpp"
-    "src/port/audio_port.c"
-    "src/id3_parser.cpp"
-    "src/xing_parser.cpp"
-    "src/decoder_wav.cpp"
-    "src/decoder_mp3.cpp"
-    "src/decoder_aac.cpp"
-    "src/decoder_flac.cpp"
-    "src/decoder_vorbis.cpp"
-    "src/decoder_opus.cpp"
-    "src/decoder_m4a.cpp"
-    "src/decoder_wavpack.cpp"
+set(core_srcs
+    src/audio_port.c
+    src/audio_ringbuf.cpp
+    src/espaudiocore.cpp
+    src/audio_player.cpp
+    src/audio_decoder_route.cpp
+    src/audio_source_fs.cpp
+    src/audio_source_ringbuf.cpp
+    src/audio_sink_alsa.cpp
+    src/audio_sink_ringbuf.cpp
+    src/id3_parser.cpp
+    src/xing_parser.cpp
+    src/decoder_wav.cpp
+    src/decoder_mp3.cpp
+    src/decoder_aac.cpp
+    src/decoder_flac.cpp
+    src/decoder_vorbis.cpp
+    src/decoder_opus.cpp
+    src/decoder_m4a.cpp
+    src/decoder_wavpack.cpp
 )
 
 # ---------------------------------------------------------------------------
-# 第三方解码库（默认全部编译；可在 menuconfig 里按格式裁剪）
+# Third-party decoders (selected by options)
 # ---------------------------------------------------------------------------
-set(thirdparty_srcs)
-set(thirdparty_incs)
-set(thirdparty_flags)
+set(tp_srcs)
+set(tp_incs)
+set(tp_defs)
 
-if (CONFIG_ESPAUDIOCORE_ENABLE_M4A AND CONFIG_ESPAUDIOCORE_ENABLE_AAC)
-    list(APPEND thirdparty_incs "lib" "lib/avpack")
-    # list(APPEND thirdparty_incs "lib" "lib/ffbase")
-    list(APPEND thirdparty_srcs
+if(ESPAUDIOCORE_ENABLE_M4A AND ESPAUDIOCORE_ENABLE_AAC)
+    list(APPEND tp_incs "lib" "lib/avpack")
+    list(APPEND tp_srcs
         "lib/ffbase/str-format.c"
         "lib/ffbase/sort.c"
     )
+    list(APPEND tp_defs FF_UNIX FF_LITTLE_ENDIAN FFBASE_OPT_SIZE)
 endif()
 
-if(CONFIG_ESPAUDIOCORE_ENABLE_MP3)
-    list(APPEND thirdparty_srcs
+if(ESPAUDIOCORE_ENABLE_MP3)
+    list(APPEND tp_srcs
         "lib/libhelix-mp3/bitstream.c"
         "lib/libhelix-mp3/buffers.c"
         "lib/libhelix-mp3/dct32.c"
@@ -68,12 +94,12 @@ if(CONFIG_ESPAUDIOCORE_ENABLE_MP3)
         "lib/libhelix-mp3/subband.c"
         "lib/libhelix-mp3/trigtabs.c"
     )
-    list(APPEND thirdparty_incs "lib/libhelix-mp3")
-    list(APPEND thirdparty_flags "-DUSE_DEFAULT_STDLIB")
+    list(APPEND tp_incs "lib/libhelix-mp3")
+    list(APPEND tp_defs USE_DEFAULT_STDLIB)
 endif()
 
-if(CONFIG_ESPAUDIOCORE_ENABLE_AAC)
-    list(APPEND thirdparty_srcs
+if(ESPAUDIOCORE_ENABLE_AAC)
+    list(APPEND tp_srcs
         "lib/libhelix-aac/aacdec.c"
         "lib/libhelix-aac/aactabs.c"
         "lib/libhelix-aac/bitstream.c"
@@ -103,12 +129,12 @@ if(CONFIG_ESPAUDIOCORE_ENABLE_AAC)
         "lib/libhelix-aac/tns.c"
         "lib/libhelix-aac/trigtabs.c"
     )
-    list(APPEND thirdparty_incs "lib/libhelix-aac")
-    list(APPEND thirdparty_flags "-DUSE_DEFAULT_STDLIB")
+    list(APPEND tp_incs "lib/libhelix-aac")
+    list(APPEND tp_defs USE_DEFAULT_STDLIB)
 endif()
 
-if(CONFIG_ESPAUDIOCORE_ENABLE_FLAC)
-    list(APPEND thirdparty_srcs
+if(ESPAUDIOCORE_ENABLE_FLAC)
+    list(APPEND tp_srcs
         "lib/libflac/bitmath.c"
         "lib/libflac/bitreader.c"
         "lib/libflac/cpu.c"
@@ -122,26 +148,21 @@ if(CONFIG_ESPAUDIOCORE_ENABLE_FLAC)
         "lib/libflac/stream_decoder.c"
         "lib/libflac/window.c"
     )
-    # libflac 的 "config.h"/"private/*" 在库根，"FLAC/*"/"share/*" 也在库根下
-    list(APPEND thirdparty_incs "lib/libflac")
-    list(APPEND thirdparty_flags "-DUSE_DEFAULT_STDLIB")
-    # ESP32-S3 的 xtensa LPC 汇编：仅在 libflac/config.h 里 EN_ESP_ASM 打开时需要
-    if(CONFIG_ESPAUDIOCORE_FLAC_XTENSA_ASM AND CONFIG_IDF_TARGET_ESP32S3)
-        list(APPEND thirdparty_srcs "lib/libflac/lpc_intrin_xtensa.c")
-    endif()
+    list(APPEND tp_incs "lib/libflac")
+    list(APPEND tp_defs USE_DEFAULT_STDLIB)
 endif()
 
-if(CONFIG_ESPAUDIOCORE_ENABLE_VORBIS OR CONFIG_ESPAUDIOCORE_ENABLE_OPUS)
-    list(APPEND thirdparty_srcs
+if(ESPAUDIOCORE_ENABLE_VORBIS OR ESPAUDIOCORE_ENABLE_OPUS)
+    list(APPEND tp_srcs
         "lib/libogg/bitwise.c"
         "lib/libogg/framing.c"
     )
-    list(APPEND thirdparty_incs "lib/libogg" "lib/libogg/ogg")
-    list(APPEND thirdparty_flags "-DUSE_DEFAULT_STDLIB")
+    list(APPEND tp_incs "lib/libogg" "lib/libogg/ogg")
+    list(APPEND tp_defs USE_DEFAULT_STDLIB)
 endif()
 
-if(CONFIG_ESPAUDIOCORE_ENABLE_VORBIS)
-    list(APPEND thirdparty_srcs
+if(ESPAUDIOCORE_ENABLE_VORBIS)
+    list(APPEND tp_srcs
         "lib/libvorbis/block.c"
         "lib/libvorbis/codebook.c"
         "lib/libvorbis/floor0.c"
@@ -156,11 +177,11 @@ if(CONFIG_ESPAUDIOCORE_ENABLE_VORBIS)
         "lib/libvorbis/vorbisfile.c"
         "lib/libvorbis/window.c"
     )
-    list(APPEND thirdparty_incs "lib/libvorbis")
+    list(APPEND tp_incs "lib/libvorbis")
 endif()
 
-if(CONFIG_ESPAUDIOCORE_ENABLE_OPUS)
-    list(APPEND thirdparty_srcs
+if(ESPAUDIOCORE_ENABLE_OPUS)
+    list(APPEND tp_srcs
         "lib/libopus/opus.c"
         "lib/libopus/opus_decoder.c"
         "lib/libopus/opus_multistream.c"
@@ -251,20 +272,19 @@ if(CONFIG_ESPAUDIOCORE_ENABLE_OPUS)
         "lib/libopus/silk/VQ_WMat_EC.c"
         "lib/libopus/silk/debug.c"
     )
-    list(APPEND thirdparty_incs "lib/libopus")
-    # opusfile（OGG 封装 + 标签解析）
-    list(APPEND thirdparty_srcs
+    list(APPEND tp_incs "lib/libopus")
+    list(APPEND tp_srcs
         "lib/opusfile/info.c"
         "lib/opusfile/internal.c"
         "lib/opusfile/opusfile.c"
         "lib/opusfile/stream.c"
     )
-    list(APPEND thirdparty_incs "lib/opusfile")
+    list(APPEND tp_incs "lib/opusfile")
 endif()
 
-if (CONFIG_ESPAUDIOCORE_ENABLE_WAVPACK)
-    list(APPEND thirdparty_incs "lib/libwavpack")
-    list(APPEND thirdparty_srcs
+if(ESPAUDIOCORE_ENABLE_WAVPACK)
+    list(APPEND tp_incs "lib/libwavpack")
+    list(APPEND tp_srcs
         "lib/libwavpack/common_utils.c"
         "lib/libwavpack/decorr_utils.c"
         "lib/libwavpack/open_legacy.c"
@@ -286,32 +306,68 @@ if (CONFIG_ESPAUDIOCORE_ENABLE_WAVPACK)
 endif()
 
 # ---------------------------------------------------------------------------
-# 注册组件
+# Library target
 # ---------------------------------------------------------------------------
-idf_component_register(
-    SRCS ${srcs} ${thirdparty_srcs}
-    INCLUDE_DIRS "include"
-    PRIV_INCLUDE_DIRS "include/private" "src" "src/port" ${thirdparty_incs}
-    REQUIRES esp_driver_i2s esp_driver_gpio esp_ringbuf
+add_library(eac ${core_srcs} ${tp_srcs})
+add_library(espaudiocore::eac ALIAS eac)
+set_target_properties(eac PROPERTIES OUTPUT_NAME espaudiocore)
+
+target_include_directories(eac
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+    PRIVATE
+        include/private
+        src
+        compat
+        ${tp_incs}
 )
 
-if(CONFIG_ESPAUDIOCORE_ENABLE_M4A AND CONFIG_ESPAUDIOCORE_ENABLE_AAC)
-    target_compile_definitions(${COMPONENT_LIB} PRIVATE
-        FF_UNIX FF_LITTLE_ENDIAN FFBASE_OPT_SIZE
-    )
-endif()
-
-# 第三方库降级警告：它们是移植过来的老代码，不改动，避免淹没自有代码的告警。
-# 同时强制注入 pgmspace 兼容层：IDF 不提供 pgmspace.h，而多个第三方库依赖它。
-if(thirdparty_srcs)
-    set_source_files_properties(${thirdparty_srcs} PROPERTIES COMPILE_OPTIONS
-        "-w;-Wno-error;-include;esp_pgmspace.h;${thirdparty_flags}")
-endif()
-
-# 自有代码：按项目规范开告警
-set_source_files_properties(${srcs} PROPERTIES COMPILE_OPTIONS
-    "-Wall;-Wextra;-Wno-unused-parameter;-Wno-error")
-
-set_source_files_properties("src/decoder_m4a.cpp" PROPERTIES
-    COMPILE_OPTIONS "-Wall;-Wextra;-Wno-unused-parameter;-Wno-error;-fpermissive;-w"
+target_compile_definitions(eac PRIVATE
+    ESPAUDIOCORE_MAX_ID3TAG_MEM_SIZE=512
+    ${tp_defs}
 )
+
+foreach(fmt WAV MP3 AAC M4A FLAC VORBIS OPUS WAVPACK)
+    if(ESPAUDIOCORE_ENABLE_${fmt})
+        target_compile_definitions(eac PRIVATE ESPAUDIOCORE_ENABLE_${fmt}=1)
+    endif()
+endforeach()
+
+target_compile_options(eac PRIVATE
+    -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers
+)
+
+# Vendored code is old and noisy: no warnings, keep the portable C paths.
+if(tp_srcs)
+    set_source_files_properties(${tp_srcs} PROPERTIES COMPILE_OPTIONS "-w")
+endif()
+
+# avpack headers use C-style implicit conversions.
+set_source_files_properties(src/decoder_m4a.cpp PROPERTIES COMPILE_OPTIONS "-fpermissive")
+
+target_link_libraries(eac PUBLIC Threads::Threads ${CMAKE_DL_LIBS} m)
+
+# ---------------------------------------------------------------------------
+# Tools
+# ---------------------------------------------------------------------------
+if(ESPAUDIOCORE_BUILD_TOOLS)
+    add_executable(eac_play examples/eac_play.c)
+    target_link_libraries(eac_play PRIVATE eac)
+    target_compile_options(eac_play PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+
+if(ESPAUDIOCORE_BUILD_TESTS)
+    add_executable(eac_selftest tests/eac_selftest.c)
+    target_link_libraries(eac_selftest PRIVATE eac)
+endif()
+
+# ---------------------------------------------------------------------------
+# Install
+# ---------------------------------------------------------------------------
+include(GNUInstallDirs)
+install(TARGETS eac
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+)
+install(FILES include/espaudiocore.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})

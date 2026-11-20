@@ -16,14 +16,15 @@
 #include "audio_downmix.h"
 
 #include <new>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#if defined(ESPAUDIOCORE_ENABLE_VORBIS)
 
 extern "C" {
 #include "ivorbisfile.h"
 }
-
-#if defined(CONFIG_ESPAUDIOCORE_ENABLE_VORBIS)
 
 #define OGG_READ_BYTES 4096
 /** int32 中间缓冲容量（采样点）：OGG_READ_BYTES 最多产生 2048 个 int16 采样点 */
@@ -410,7 +411,7 @@ AudioDecoder *create_vorbis(void)
     return new (std::nothrow) DecoderVorbis();
 }
 
-#else /* !CONFIG_ESPAUDIOCORE_ENABLE_VORBIS */
+#else /* !ESPAUDIOCORE_ENABLE_VORBIS */
 
 bool probe_vorbis(AudioInput *in)
 {

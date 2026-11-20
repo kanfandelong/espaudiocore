@@ -1,7 +1,0 @@
-dependencies:
-
-  # The library sources are clean upstream (2e48c75).  Only this version
-  # constraint is relaxed so the same component can be built by the LiClock
-  # ESP-IDF 5.5.5 project; upstream declared IDF >= 6.1.
-  idf:
-    version: '>=5.5.0'

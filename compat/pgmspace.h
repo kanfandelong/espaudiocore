@@ -1,19 +1,14 @@
 /*
  * SPDX-License-Identifier: MIT
  * Copyright (c) 2026 kanfandelong. All rights reserved.
- */
-
-/**
- * @file    pgmspace.h
- * @brief   ESP-IDF 下的 AVR pgmspace 兼容层。
  *
- * ESP-IDF **不提供** pgmspace.h，
- * 而本组件内的第三方库（libhelix-mp3/aac、libogg、libopus、libmad 等）
- * 大量使用 PROGMEM / PSTR / pgm_read_*。
+ * Third-party legacy compatibility header for libhelix-mp3/aac, libogg and
+ * libopus. These vendored libraries were written for AVR/Arduino and still say
+ * #include <pgmspace.h>. On Linux .rodata and .text are in the same address
+ * space, so PROGMEM and pgm_read_* collapse to plain memory accesses.
  *
- * ESP32 上 .rodata 本就在可寻址的 flash/PSRAM 映射区，没有 AVR 那种
- * "必须用特殊指令读"的约束，所以这些宏全部退化为普通操作——
- * 与 Arduino 侧 cores/esp32/pgmspace.h 的语义一致，无运行时差异。
+ * This is NOT an operating-system compatibility layer: no ESP-IDF, FreeRTOS
+ * or I2S API is emulated here.
  */
 
 #pragma once
@@ -36,7 +31,7 @@
 #define PSTR(s) (s)
 #endif
 
-/* 带 _P 后缀的字符串/内存函数退化为标准版本 */
+/* AVR _P string/memory helpers degrade to the standard functions. */
 #ifndef memcpy_P
 #define memcpy_P memcpy
 #endif
@@ -81,7 +76,7 @@
 #define vsnprintf_P vsnprintf
 #endif
 
-/* 读 flash/rodata：普通解引用 */
+/* Reading "program memory" is a normal dereference on Linux. */
 #ifndef pgm_read_byte
 #define pgm_read_byte(addr) (*(const unsigned char *)(addr))
 #endif
@@ -98,7 +93,6 @@
 #define pgm_read_ptr(addr) (*(void *const *)(addr))
 #endif
 
-/* 近/远地址变体在 ESP32 上等价 */
 #define pgm_read_byte_near(addr) pgm_read_byte(addr)
 #define pgm_read_word_near(addr) pgm_read_word(addr)
 #define pgm_read_dword_near(addr) pgm_read_dword(addr)
@@ -111,7 +105,6 @@
 #define pgm_read_float_far(addr) pgm_read_float(addr)
 #define pgm_read_ptr_far(addr) pgm_read_ptr(addr)
 
-/* 老代码里偶见的宏 */
 #ifndef PROGMEM_ATTR
 #define PROGMEM_ATTR
 #endif

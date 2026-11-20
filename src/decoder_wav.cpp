@@ -14,10 +14,11 @@
 #include "audio_downmix.h"
 
 #include <new>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#if defined(CONFIG_ESPAUDIOCORE_ENABLE_WAV)
+#if defined(ESPAUDIOCORE_ENABLE_WAV)
 
 #define WAV_HEADER_SCAN_MAX 4096
 #define WAV_OUT_FRAMES      512 /**< 每次 decode 输出的立体声帧数 */
@@ -65,10 +66,23 @@ public:
                     break;
                 }
                 const uint8_t *f = hdr + off + 8;
-                audio_fmt_      = audio_rd_le16(f + 0);
+                uint16_t tag    = audio_rd_le16(f + 0);
                 channels_       = audio_rd_le16(f + 2);
                 rate_           = audio_rd_le32(f + 4);
                 bits_           = audio_rd_le16(f + 14);
+                /* WAVE_FORMAT_EXTENSIBLE (0xFFFE): the real format tag lives
+                 * in the first two bytes of the SubFormat GUID at offset 24.
+                 * This is what ffmpeg writes for 24-bit PCM. */
+                if (tag == 0xFFFE) {
+                    if (csize < 40 || off + 8 + 40 > (size_t)got) {
+                        break;
+                    }
+                    uint16_t sub = audio_rd_le16(f + 24);
+                    if (sub == 1 || sub == 3) {
+                        tag = sub;
+                    }
+                }
+                audio_fmt_      = tag;
                 have_fmt        = true;
             } else if (memcmp(id, "data", 4) == 0) {
                 if (!have_fmt) {
@@ -512,7 +526,7 @@ AudioDecoder *create_wav(void)
     return new (std::nothrow) DecoderWav();
 }
 
-#else /* !CONFIG_ESPAUDIOCORE_ENABLE_WAV */
+#else /* !ESPAUDIOCORE_ENABLE_WAV */
 
 bool probe_wav(AudioInput *in)
 {

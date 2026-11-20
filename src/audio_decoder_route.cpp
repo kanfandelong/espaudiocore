@@ -8,7 +8,7 @@
  * @brief   解码器路由表与匹配逻辑（见 D-6）。
  *
  * 新增格式 = 在 g_decoders[] 里加一行 + 实现该格式的 create/probe。
- * 表按 Kconfig 裁剪：未启用的格式条目直接不进表，因此"不支持"是
+ * 表按 CMake 选项裁剪：未启用的格式条目直接不进表，因此"不支持"是
  * 编译期决定，而不是运行时才发现。
  */
 
@@ -20,7 +20,7 @@
 #include <string.h>
 #include <strings.h> /* strcasecmp */
 
-#include "sdkconfig.h"
+/* Decoder set is selected by CMake (ESPAUDIOCORE_ENABLE_xxx=1). */
 
 /* 各格式的 create / probe 由对应 decoder_*.cpp 提供（C++ 链接） */
 AudioDecoder *create_wav(void);
@@ -43,32 +43,32 @@ bool probe_m4a(AudioInput *in);
 /* 注意：OGG 容器要能区分 Vorbis / Opus，所以 probe_vorbis 必须排在 probe_opus 之前
  * （Vorbis 的探测会看第一页 payload 是否为 0x01"vorbis"，不是才让给 Opus）。 */
 static const audio_decoder_entry_t g_decoders[] = {
-#ifdef CONFIG_ESPAUDIOCORE_ENABLE_WAV
-    { "wav", "WAV", probe_wav, create_wav, 8192 },
+#ifdef ESPAUDIOCORE_ENABLE_WAV
+    { "wav", "WAV", probe_wav, create_wav },
 #endif
-#ifdef CONFIG_ESPAUDIOCORE_ENABLE_MP3
-    { "mp3", "MP3", probe_mp3, create_mp3, 8192 },
+#ifdef ESPAUDIOCORE_ENABLE_MP3
+    { "mp3", "MP3", probe_mp3, create_mp3 },
 #endif
-#ifdef CONFIG_ESPAUDIOCORE_ENABLE_AAC
-    { "aac", "AAC", probe_aac, create_aac, 8192 },
+#ifdef ESPAUDIOCORE_ENABLE_AAC
+    { "aac", "AAC", probe_aac, create_aac },
 #endif
-#if defined(CONFIG_ESPAUDIOCORE_ENABLE_M4A) && defined(CONFIG_ESPAUDIOCORE_ENABLE_AAC)
-    { "m4a", "M4A/AAC", probe_m4a, create_m4a, 8192 },
+#if defined(ESPAUDIOCORE_ENABLE_M4A) && defined(ESPAUDIOCORE_ENABLE_AAC)
+    { "m4a", "M4A/AAC", probe_m4a, create_m4a },
 #endif
-#ifdef CONFIG_ESPAUDIOCORE_ENABLE_FLAC
-    { "flac", "FLAC", probe_flac, create_flac, 8192 },
+#ifdef ESPAUDIOCORE_ENABLE_FLAC
+    { "flac", "FLAC", probe_flac, create_flac },
 #endif
-#ifdef CONFIG_ESPAUDIOCORE_ENABLE_VORBIS
-    { "ogg", "Vorbis", probe_vorbis, create_vorbis, 8192 },
+#ifdef ESPAUDIOCORE_ENABLE_VORBIS
+    { "ogg", "Vorbis", probe_vorbis, create_vorbis },
 #endif
-#ifdef CONFIG_ESPAUDIOCORE_ENABLE_OPUS
-    { "opus", "Opus", probe_opus, create_opus, 16384 },
+#ifdef ESPAUDIOCORE_ENABLE_OPUS
+    { "opus", "Opus", probe_opus, create_opus },
 #endif
-#ifdef CONFIG_ESPAUDIOCORE_ENABLE_WAVPACK
-    { "wv", "WavPack", probe_wavpack, create_wavpack, 8192 },
+#ifdef ESPAUDIOCORE_ENABLE_WAVPACK
+    { "wv", "WavPack", probe_wavpack, create_wavpack },
 #endif
     /* 终止哨兵：ext == NULL */
-    { NULL, NULL, NULL, NULL, 0 },
+    { NULL, NULL, NULL, NULL },
 };
 
 const audio_decoder_entry_t *audio_decoder_table(void)

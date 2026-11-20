@@ -121,8 +121,6 @@ typedef struct {
 
     /** 创建一个新的解码器实例；不支持时返回 NULL */
     AudioDecoder *(*create)(void);
-
-    uint32_t task_stack; /**< 该格式推荐栈大小；0 = 用 Kconfig 默认值 */
 } audio_decoder_entry_t;
 
 /** 取路由表（以 ext == NULL 结尾）。实现在 audio_decoder_route.cpp。 */

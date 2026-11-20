@@ -11,11 +11,16 @@
 #include "id3_parser.h"
 #include "audio_port.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef ESPAUDIOCORE_MAX_ID3TAG_MEM_SIZE
+#define ESPAUDIOCORE_MAX_ID3TAG_MEM_SIZE 512 /* KiB */
+#endif
+
 /** 允许的最大标签尺寸 */
-static const size_t MAX_ID3_SIZE = CONFIG_ESPAUDIOCORE_MAX_ID3TAG_MEM_SIZE * 1024;
+static const size_t MAX_ID3_SIZE = ESPAUDIOCORE_MAX_ID3TAG_MEM_SIZE * 1024;
 
 /* ---------------------------------------------------------------------------
  * 基础读取辅助

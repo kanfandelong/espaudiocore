@@ -5,56 +5,60 @@
 
 /**
  * @file    audio_sink.h
- * @brief   数据汇具体实现：I2S / ringbuf。内部使用。
+ * @brief   Concrete sinks: ALSA device / ring buffer. Internal use.
  */
 
 #pragma once
 
+#include <atomic>
+
 #include "audio_types.h"
+#include "espaudiocore.h"
 
-#include "driver/i2s_std.h"
-#include "freertos/ringbuf.h"
-
-/* 本头文件含 C++ 类型，仅供 .cpp 包含 */
+/* This header contains C++ types and is for .cpp files only. */
 
 /**
- * @brief I2S 输出汇。
+ * @brief ALSA output sink.
  *
- * @param tx            调用者持有的 TX 通道（须已 init_std_mode + enable）
- * @param io_timeout_ms 单次 i2s_channel_write 的超时；0 表示用默认值（20ms）
- * @param target_bits   强制输出位宽（8/16/24/32）；0 = 跟随解码器原生位宽。
- *                      大于源位宽时样本左移补齐（PCM5102 需要 32）。
- * @note 本类只写数据与重配时钟，不负责创建/销毁通道。
+ * @param device        ALSA PCM name ("default", "plughw:0,0", ...)
+ * @param io_timeout_ms write timeout; 0 = no timeout
+ * @param target_bits   forced output bit depth (16/24/32); 0 = follow source
+ * @param latency_ms    target ALSA latency; 0 = 200 ms
+ * @return NULL on failure to open/configure the device
+ *
+ * @note The device is opened immediately so configuration errors surface at
+ *       begin() time. Actual hw_params are applied lazily on the first write,
+ *       after the decoder has reported its real rate/bits/channels.
  */
-AudioSink *audio_sink_i2s_create(i2s_chan_handle_t tx, uint32_t io_timeout_ms, uint8_t target_bits);
+AudioSink *audio_sink_alsa_create(const char *device, uint32_t io_timeout_ms, uint8_t target_bits,
+                                  uint32_t latency_ms);
 
-/** 绑定停止标志：write() 的等待会被它打断（见 D-14） */
-void audio_sink_i2s_bind_stop(AudioSink *sink, const volatile bool *flag);
+/** @brief Bind the session stop flag so blocking writes can be interrupted. */
+void audio_sink_alsa_bind_stop(AudioSink *sink, const std::atomic<bool> *flag);
 
 /**
- * @brief 绑定 PCM 旁路回调（FFT / 波形取数）。
+ * @brief Bind the PCM tap callback (FFT / waveform).
  *
- * 回调在写 I2S 之前、音量缩放之前触发，数据为左对齐到 32 位的 int32。
- * 只在 I2S 输出汇上提供；ringbuf 输出本身已把 PCM 交给应用。
+ * Fired before volume scaling and before the ALSA write, with int32 samples.
  */
-void audio_sink_i2s_set_pcm(AudioSink *sink, espaudiocore_pcm_cb_t cb, void *user);
+void audio_sink_alsa_set_pcm(AudioSink *sink, espaudiocore_pcm_cb_t cb, void *user);
 
-/** I2S DMA 队列内尚未播出的字节数（用于位置查询扣除） */
-size_t audio_sink_i2s_pending_bytes(AudioSink *sink);
+/** @brief Frames still buffered in ALSA (used by get_position_ms). */
+size_t audio_sink_alsa_pending_frames(AudioSink *sink);
 
-/** 当前输出汇中尚未播出的字节数；ringbuf 输出恒为 0 */
-size_t audio_sink_pending_bytes(AudioSink *sink);
+/** @brief Frames still pending in the output; 0 for the ring-buffer sink. */
+size_t audio_sink_pending_frames(AudioSink *sink);
 
 /**
- * @brief ringbuf 输出汇（PCM 帧）。
+ * @brief Ring-buffer output sink (PCM frames).
  *
- * 该模式不碰任何硬件：采样率变化不重配任何东西，只由
- * espaudiocore_get_format() 报告，应用层自行处理（见 D-9）。
+ * This mode never touches hardware. Rate changes are not reconfigured; the
+ * application reads them through espaudiocore_get_format().
  *
- * @param target_bits 强制输出位宽；0 = 跟随解码器原生位宽
+ * @param rb          output ring buffer (owned by the application)
+ * @param target_bits forced output bit depth; 0 = follow source
  */
-AudioSink *audio_sink_ringbuf_create(RingbufHandle_t rb, uint8_t target_bits);
+AudioSink *audio_sink_ringbuf_create(espaudiocore_ringbuf_t *rb, uint8_t target_bits);
 
-/** 绑定停止标志 */
-void audio_sink_ringbuf_bind_stop(AudioSink *sink, const volatile bool *flag);
-
+/** @brief Bind the session stop flag. */
+void audio_sink_ringbuf_bind_stop(AudioSink *sink, const std::atomic<bool> *flag);

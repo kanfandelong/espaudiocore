@@ -26,8 +26,8 @@
 #define FLAC__ALIGN_MALLOC_DATA 1
 
 /* define to force libFLAC to allocate internal ESP32 heap using heap_caps_* functions */
+/* Native Linux branch: use the standard allocator. */
 /* #undef FLAC__USE_ESP32_HEAP_CAPS_ALLOC */
-#define FLAC__USE_ESP32_HEAP_CAPS_ALLOC 1
 
 /* define if building for ARM */
 #undef FLAC__CPU_ARM64

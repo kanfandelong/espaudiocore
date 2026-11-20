@@ -500,7 +500,7 @@ static inline Word64 MADD64(Word64 sum64, int x, int y)
 	return sum64;
 }
 
-#elif defined(ESP_PLATFORM) || defined(ARDUINO) || defined(__GNUC__) && (defined(__powerpc__) || defined(__POWERPC__)) || (defined (_SOLARIS) && !defined (__GNUC__) && !defined (_SOLARISX86))
+#elif defined(ESP_PLATFORM) || defined(ARDUINO) || defined(__x86_64__) || defined(__aarch64__) || defined(__arm__) || defined(__GNUC__) && (defined(__powerpc__) || defined(__POWERPC__)) || (defined (_SOLARIS) && !defined (__GNUC__) && !defined (_SOLARISX86))
 
 typedef long long Word64;
 

@@ -5,7 +5,10 @@
 
 /**
  * @file    audio_port.h
- * @brief   平台适配层：日志 / 内存 / 错误转换。**唯一**允许出现平台差异的地方。
+ * @brief   Linux platform layer: logging, aligned memory, error mapping.
+ *
+ * This is a *native* Linux layer, not an emulation of an embedded RTOS. It
+ * contains no ESP-IDF, FreeRTOS, I2S or ring-buffer API.
  */
 
 #pragma once
@@ -13,67 +16,62 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "esp_err.h"
-#include "esp_heap_caps.h"
-#include "esp_log.h"
-#include "sdkconfig.h"
-
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /* ===========================================================================
- * 日志
+ * Logging
  * =========================================================================*/
 
-/** 全库统一 TAG：可用 esp_log_level_set(ESPAUDIOCORE_TAG, ESP_LOG_WARN) 一次控制 */
-#define ESPAUDIOCORE_TAG "espaudiocore"
+#define AUDIO_LOG_NONE  0
+#define AUDIO_LOG_ERROR 1
+#define AUDIO_LOG_WARN  2
+#define AUDIO_LOG_INFO  3
+#define AUDIO_LOG_DEBUG 4
 
-#define AUDIO_LOGE(fmt, ...) ESP_LOGE(ESPAUDIOCORE_TAG, fmt, ##__VA_ARGS__)
-#define AUDIO_LOGW(fmt, ...) ESP_LOGW(ESPAUDIOCORE_TAG, fmt, ##__VA_ARGS__)
-#define AUDIO_LOGI(fmt, ...) ESP_LOGI(ESPAUDIOCORE_TAG, fmt, ##__VA_ARGS__)
-#define AUDIO_LOGD(fmt, ...) ESP_LOGD(ESPAUDIOCORE_TAG, fmt, ##__VA_ARGS__)
-#define AUDIO_LOGV(fmt, ...) ESP_LOGV(ESPAUDIOCORE_TAG, fmt, ##__VA_ARGS__)
+/** Process-wide log level, initialised from $ESPAUDIOCORE_LOG_LEVEL. */
+void audio_log_set_level(int level);
+int  audio_log_get_level(void);
+
+/** printf-style log sink; normally called through the macros below. */
+#if defined(__GNUC__)
+__attribute__((format(printf, 2, 3)))
+#endif
+void audio_log_write(int level, const char *fmt, ...);
+
+#define AUDIO_LOGE(...) audio_log_write(AUDIO_LOG_ERROR, __VA_ARGS__)
+#define AUDIO_LOGW(...) audio_log_write(AUDIO_LOG_WARN, __VA_ARGS__)
+#define AUDIO_LOGI(...) audio_log_write(AUDIO_LOG_INFO, __VA_ARGS__)
+#define AUDIO_LOGD(...) audio_log_write(AUDIO_LOG_DEBUG, __VA_ARGS__)
 
 /* ===========================================================================
- * 内存
+ * Memory
  * =========================================================================*/
 
 /**
- * @brief 大块缓冲：优先 PSRAM 且尝试带 DMA 能力，失败退回纯 PSRAM。
+ * @brief Allocate a large, cache-line aligned buffer.
  *
- * 两者都失败时返回 NULL（不回退到内部 RAM，避免悄悄吃掉宝贵的内部内存；
- * 若确实需要内部 RAM，调用者显式用 audio_alloc_dma()）。
- *
- * @param align 对齐字节数，0 表示默认（32 字节，兼顾 cache 行与 DMA）
+ * @param align Alignment in bytes; 0 means 64 (cache line).
+ * @return NULL on failure.
  */
 void *audio_alloc_big(size_t size, size_t align);
 
-/**
- * @brief 必须能被 DMA 访问的缓冲（I2S 描述符相关）。
- * @note 只在明确需要 DMA 直连时使用。
- */
-void *audio_alloc_dma(size_t size);
-
+/** @brief Free a buffer returned by audio_alloc_big(). NULL is accepted. */
 void audio_free(void *p);
 
-/** @brief 诊断：返回尝试 PSRAM+DMA 失败的次数。 */
-#if defined(CONFIG_ESPAUDIOCORE_DEBUG_DIAGNOSTICS)
-uint32_t audio_alloc_psram_dma_miss_count(void);
-#endif
-
 /* ===========================================================================
- * 错误转换
+ * Errors
  * =========================================================================*/
 
-/** 内部错误码 -> 公共 esp_err_t */
-esp_err_t audio_err_to_esp(int audio_err);
+/** Internal audio_err_t -> public negative errno code. */
+int audio_err_to_code(int audio_err);
 
-/** 取可读名，用于日志 */
+/** Readable name for an internal audio_err_t, used by logs. */
 const char *audio_err_name(int audio_err);
 
 /* ===========================================================================
- * 字节序 / 小工具
+ * Byte order helpers (decoders parse little/big endian containers)
  * =========================================================================*/
 
 static inline uint16_t audio_rd_le16(const uint8_t *p)

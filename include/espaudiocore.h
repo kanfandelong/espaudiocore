@@ -5,151 +5,177 @@
 
 /**
  * @file    espaudiocore.h
- * @brief   多解码器统一封装接口库。
+ * @brief   Multi-format audio decoder with native Linux (ALSA) output.
  *
- * 用法（一次调用起播，解码在内部任务里自治）：
+ * This header is the public C API of the native Linux build. It has no
+ * dependency on ESP-IDF, FreeRTOS or I2S: output goes to ALSA, threads are
+ * pthreads, and every function returns 0 or a negative errno value.
+ *
+ * Quick start (one call starts decoding, the worker thread lives until EOS
+ * or until espaudiocore_stop() is called):
  *
  * @code{c}
- *   i2s_chan_handle_t tx;
- *   // ... 由应用创建 I2S 通道并 init_std_mode + enable ...
+ *   espaudiocore_cfg_t cfg = {0};
+ *   cfg.alsa_device = "plughw:0,0"; // NULL => "default"
+ *   cfg.on_event    = my_event_cb;
+ *   cfg.on_meta     = my_meta_cb;
+ *   cfg.user        = my_ctx;
  *
- *   espaudiocore_cfg_t cfg = {
- *       .on_event = my_event_cb,
- *       .on_meta  = my_meta_cb,
- *       .user     = my_ctx,
- *   };
  *   int dec_err = 0;
- *   ESP_ERROR_CHECK(espaudiocore_begin("/sdcard/a.mp3", tx, &cfg, &dec_err));
- *   // 播放结束会通过 ESPAUDIOCORE_EVT_EOS 通知
+ *   int rc = espaudiocore_begin("/music/a.mp3", &cfg, &dec_err);
+ *   if (rc != 0) { fprintf(stderr, "%s\n", espaudiocore_strerror(rc)); }
+ *   // ... ESPAUDIOCORE_EVT_EOS arrives on the decoder thread
+ *   espaudiocore_stop();
  * @endcode
  *
+ * Threading contract:
+ *  - begin/pause/resume/seek/stop are meant to be called from one control
+ *    thread (the player object is a process-wide singleton, exactly like the
+ *    ESP-IDF build).
+ *  - callbacks run on the decoder thread and must not block.
+ *
  * @author  kanfandelong <kanfandelong@outlook.com>
- * @date    2026-10-08
- * @version 1.0.0
+ * @date    2026-11-20
+ * @version 2.0.0
  */
 
 #pragma once
 
+#include <errno.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-
-#include "esp_err.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* 条件编译：让句柄类型在裁剪了对应功能时也能通过编译 */
-#include "sdkconfig.h"
-#if defined(CONFIG_ESPAUDIOCORE_ENABLE_MP3) || defined(CONFIG_ESPAUDIOCORE_ENABLE_AAC) || \
-    defined(CONFIG_ESPAUDIOCORE_ENABLE_FLAC) || defined(CONFIG_ESPAUDIOCORE_ENABLE_VORBIS) || \
-    defined(CONFIG_ESPAUDIOCORE_ENABLE_OPUS)
-#include "driver/i2s_std.h"
-#endif
-#include "freertos/FreeRTOS.h"
-#include "freertos/ringbuf.h"
+#define ESPAUDIOCORE_VERSION_MAJOR 2
+#define ESPAUDIOCORE_VERSION_MINOR 0
+#define ESPAUDIOCORE_VERSION_PATCH 0
+#define ESPAUDIOCORE_VERSION_STRING "2.0.0"
 
 /* ===========================================================================
- * 错误码
+ * Return codes
  * =========================================================================*/
 
-/** 返回码复用 IDF 语义，保证 esp_err_to_name() 打出正确名字 */
+/**
+ * @brief Return codes. Success is 0, failures are negative errno values.
+ *
+ * The values are real errno constants, so callers can also compare against
+ * -EINVAL etc. `espaudiocore_strerror()` prints a readable name.
+ */
 typedef enum {
-    ESPAUDIOCORE_ERR_UNSUPPORTED = ESP_ERR_NOT_SUPPORTED,    /**< 没有能处理的路由 */
-    ESPAUDIOCORE_ERR_OPEN_FAILED = ESP_ERR_NOT_FOUND,        /**< 文件/路径打不开 */
-    ESPAUDIOCORE_ERR_HEADER      = ESP_ERR_INVALID_RESPONSE, /**< 头部/容器解析失败 */
-    ESPAUDIOCORE_ERR_NOT_RUNNING = ESP_ERR_INVALID_STATE,    /**< 未在播放 */
-    ESPAUDIOCORE_ERR_DECODER     = ESP_FAIL,                 /**< 解码失败，详情看 dec_err / EVT_ERROR */
+    ESPAUDIOCORE_OK = 0,
+    ESPAUDIOCORE_ERR_INVALID_ARG = -EINVAL,   /**< bad argument */
+    ESPAUDIOCORE_ERR_NO_MEM = -ENOMEM,        /**< allocation failed */
+    ESPAUDIOCORE_ERR_NOT_FOUND = -ENOENT,     /**< file/path/device not found */
+    ESPAUDIOCORE_ERR_NOT_SUPPORTED = -ENOTSUP,/**< capability not available */
+    ESPAUDIOCORE_ERR_IO = -EIO,               /**< read/write/driver failure */
+    ESPAUDIOCORE_ERR_HEADER = -EBADMSG,       /**< container/header parse failure */
+    ESPAUDIOCORE_ERR_STATE = -EPERM,          /**< operation invalid in current state */
+    ESPAUDIOCORE_ERR_TIMEOUT = -ETIMEDOUT,    /**< blocking operation timed out */
+    ESPAUDIOCORE_ERR_DECODER = -EILSEQ,       /**< decoder reported corrupt data */
 } espaudiocore_err_t;
 
+/** @brief Human readable name for a return code (never NULL). */
+const char *espaudiocore_strerror(int err);
+
+/** @brief Log levels, ordered from silent to verbose. */
+typedef enum {
+    ESPAUDIOCORE_LOG_NONE = 0,
+    ESPAUDIOCORE_LOG_ERROR = 1,
+    ESPAUDIOCORE_LOG_WARN = 2,
+    ESPAUDIOCORE_LOG_INFO = 3,
+    ESPAUDIOCORE_LOG_DEBUG = 4,
+} espaudiocore_log_level_t;
+
+/**
+ * @brief Set the process-wide log level (default: INFO).
+ *
+ * The ESPAUDIOCORE_LOG_LEVEL environment variable is read once at startup and
+ * provides the initial value.
+ */
+void espaudiocore_set_log_level(int level);
+int espaudiocore_get_log_level(void);
+
 /* ===========================================================================
- * 事件
+ * Events
  * =========================================================================*/
 
 typedef enum {
-    ESPAUDIOCORE_EVT_STARTED = 0, /**< begin() 成功、解码任务已启动，开始出数据 */
-    ESPAUDIOCORE_EVT_PAUSED,      /**< pause() 生效，已停止推送 */
-    ESPAUDIOCORE_EVT_RESUMED,     /**< resume() 生效，恢复推送 */
-    ESPAUDIOCORE_EVT_SEEKED,      /**< seek_ms() 完成，位置已生效 */
-    ESPAUDIOCORE_EVT_EOS,         /**< 数据正常读到结尾，播放结束 */
-    ESPAUDIOCORE_EVT_STOPPED,     /**< stop() 完成，任务已退出（EOS 之后也会自然触发） */
-    ESPAUDIOCORE_EVT_ERROR,       /**< 错误；详情见 msg */
+    ESPAUDIOCORE_EVT_STARTED = 0, /**< begin() succeeded, decoding has started */
+    ESPAUDIOCORE_EVT_PAUSED,      /**< pause() took effect */
+    ESPAUDIOCORE_EVT_RESUMED,     /**< resume() took effect */
+    ESPAUDIOCORE_EVT_SEEKED,      /**< seek_ms() completed */
+    ESPAUDIOCORE_EVT_EOS,         /**< end of stream reached normally */
+    ESPAUDIOCORE_EVT_STOPPED,     /**< worker stopped (also follows EOS) */
+    ESPAUDIOCORE_EVT_ERROR,       /**< error, see msg */
 } espaudiocore_event_t;
 
 /**
- * @brief 事件回调。在**解码任务上下文**同步执行。
+ * @brief Event callback, runs synchronously on the decoder thread.
  *
- * 契约：禁止阻塞（不要在里面做 I2S 写、网络请求、GUI 重绘）。
- *       msg 指向栈上格式化缓冲，仅在回调期间有效，需要留存必须拷贝。
- *       需要异步通知时，自行在回调里 xQueueSend()。
+ * Contract: do not block (no ALSA writes, network or GUI work here).
+ * `msg` points to a stack buffer and is only valid during the callback.
  */
 typedef void (*espaudiocore_event_cb_t)(void *user, espaudiocore_event_t ev, const char *msg);
 
 /**
- * @brief 一条元数据。文本与图片共用同一结构。
+ * @brief One metadata item. Text and binary (cover art) share this struct.
  *
- * @note APIC 等图片的 data 指向**解析缓冲内的原始字节**，本库不做额外拷贝，
- *       所以一个带大封面的 MP3 不会让本库吃掉几百 KB 堆。
- *       代价是 data 只在回调期间有效——需要留存必须在回调里自行拷贝。
- *       图片建议用"存文件 + 只留路径"的语义，而不是把图放进内存。
+ * @note APIC data points into the parser buffer and is only valid during the
+ *       callback. Store it to a file inside the callback if it must live on.
  */
 typedef struct {
     const char *type;      /**< "Title"/"Artist"/"Album"/"APIC"/... */
-    bool        is_binary; /**< APIC 等二进制元数据为 true */
-    const char *data;      /**< 文本：NUL 结尾；二进制：原始字节 */
-    size_t      len;       /**< 文本为 strlen；二进制为字节数（必需） */
-    const char *mime;      /**< 图片 MIME，如 "image/jpeg"；文本为 NULL */
-    int         pic_type;  /**< ID3 APIC picture type 0-20；非图片为 -1 */
+    bool        is_binary; /**< true for APIC and other binary tags */
+    const char *data;      /**< text: NUL terminated; binary: raw bytes */
+    size_t      len;       /**< text: strlen; binary: byte count */
+    const char *mime;      /**< image MIME, e.g. "image/jpeg"; NULL for text */
+    int         pic_type;  /**< ID3 APIC picture type 0-20; -1 for non-images */
 } espaudiocore_meta_t;
 
 /**
- * @brief 元数据回调。在**解码任务上下文**同步执行。
+ * @brief Metadata callback, runs synchronously on the decoder thread.
  *
- * @note meta->data 对图片指向解析缓冲内的原始字节，仅在回调期间有效。
- *       本回调同样禁止阻塞。
+ * `meta->data` for pictures is only valid during the callback. Do not block.
  */
 typedef void (*espaudiocore_meta_cb_t)(void *user, const espaudiocore_meta_t *meta);
 
 /* ===========================================================================
- * PCM 旁路（供 FFT / 频谱 / 波形等可视化功能取数）
+ * PCM tap (FFT / waveform visualisation)
  * =========================================================================*/
 
 /**
- * @brief 一段解码后的 PCM 数据。
+ * @brief A block of decoded PCM.
  *
- * 数值语义与解码器交给输出层的完全一致：**左对齐到 32 位的 int32 采样点**。
- *  - `bits == 16`：值 = int16 << 16，取 16 位波形直接 `v >> 16`；
- *  - `bits == 24`：值 = int24 << 8；
- *  - `bits == 32`：原值。
- *
- * 这样应用层既能拿到 16-bit 播放器所需的幅度，也不会让 24/32-bit 源丢精度。
+ * Values are left-aligned int32 samples, matching what the decoder hands to
+ * the output stage:
+ *  - `bits == 16`: value = int16 << 16 (use `v >> 16` for the 16-bit sample);
+ *  - `bits == 24`: value = int24 << 8;
+ *  - `bits == 32`: raw value.
  */
 typedef struct {
-    const int32_t *samples;  /**< 交错采样点：samples[frame * channels + ch] */
-    size_t         frames;   /**< 帧数（每帧含 channels 个采样点） */
-    uint32_t       rate;     /**< 当前采样率 Hz */
-    uint8_t        channels; /**< 声道数 1/2 */
-    uint8_t        bits;     /**< 有效位深 16/24/32，见上面的对齐说明 */
+    const int32_t *samples;  /**< interleaved: samples[frame * channels + ch] */
+    size_t         frames;   /**< number of frames */
+    uint32_t       rate;     /**< current sample rate in Hz */
+    uint8_t        channels; /**< 1 or 2 */
+    uint8_t        bits;     /**< effective bit depth 16/24/32 */
 } espaudiocore_pcm_t;
 
 /**
- * @brief PCM 旁路回调：每批解码数据**写入输出之前**、**音量缩放之前**触发。
+ * @brief PCM tap callback, fired before volume scaling and before the write
+ *        to the device.
  *
- * 用途：FFT / 频谱 / 波形采样。数据本身是零拷贝的，不需要额外缓冲。
- *
- * 契约：在**解码任务上下文**同步执行，禁止阻塞（不要做 I2S 写、网络请求、
- *       GUI 重绘）。`pcm->samples` 仅在回调期间有效，需要留存必须自行拷贝。
- *       `frames` 可能较大（MP3 一帧 1152 帧），逐点处理时注意耗时。
- *
- * @note 目前只在 **I2S 输出**（`espaudiocore_begin()` / `espaudiocore_begin_stream()`）
- *       时提供；ringbuf 输出模式下应用本身已经拿到 PCM，无需旁路。
- *       未设置时不产生任何额外开销。
+ * Only available for device (ALSA) output; with ring-buffer output the
+ * application already owns the PCM. The callback runs on the decoder thread
+ * and must not block. `pcm->samples` is only valid during the callback.
  */
 typedef void (*espaudiocore_pcm_cb_t)(void *user, const espaudiocore_pcm_t *pcm);
 
 /* ===========================================================================
- * 格式（ringbuf 输入时必须显式给出）
+ * Formats
  * =========================================================================*/
 
 typedef enum {
@@ -165,175 +191,195 @@ typedef enum {
 } espaudiocore_format_t;
 
 /* ===========================================================================
- * 配置
+ * Configuration
  * =========================================================================*/
 
+/**
+ * @brief Player configuration. Zero-initialise the struct and set what you
+ *        need; every field has a documented default.
+ */
 typedef struct {
-    uint32_t task_stack;    /**< 0 = 用解码器表推荐值（默认 8192，Opus 16384） */
-    int      task_priority; /**< 0 = 用 Kconfig 默认值 */
-    int      task_core;     /**< 默认 1；-1 = 不绑核 */
-    uint32_t io_timeout_ms; /**< 输出阻塞超时；0 = 无限等待（推荐） */
+    /**
+     * ALSA PCM device for `espaudiocore_begin()` / `espaudiocore_begin_stream()`.
+     * NULL or "" selects "default". The board usually wants "plughw:0,0".
+     */
+    const char *alsa_device;
+
+    /** ALSA target latency in milliseconds. 0 = 200 ms. Clamped to 20..2000. */
+    uint32_t alsa_latency_ms;
+
+    /** Blocking write timeout for device/ring output; 0 = wait forever. */
+    uint32_t io_timeout_ms;
 
     /**
-     * 输出位宽，两种模式（可由 Kconfig 设默认值，此处优先）：
-     *  - `0`：**跟随 PCM 位宽**，不做任何位宽处理；
-     *  - `16/24/32`：**固定位宽输出**。当 PCM 位宽 < 目标位宽时样本左移补齐，
-     *    当 PCM 位宽 > 目标位宽时右移截断。
-     *
-     * 例：PCM5102 固定 32-bit 槽宽时设为 32；16-bit 源会被左移 16 位。
+     * Output bit depth:
+     *  - `0`: follow the PCM bit depth (no conversion);
+     *  - `16/24/32`: fixed output depth. Narrower samples are shifted down,
+     *    wider ones are left-aligned exactly like the ESP-IDF build.
      */
     uint8_t output_bits;
 
-    /** 初始音量（dB）。0 = 原始幅度；-60 及以下视为静音。可为 0。 */
+    /** Initial volume in dB. 0 = unity; -60 or below is treated as silence. */
     float volume_db;
 
-    espaudiocore_event_cb_t on_event; /**< 可为 NULL */
-    espaudiocore_meta_cb_t  on_meta;  /**< 可为 NULL */
-    espaudiocore_pcm_cb_t   on_pcm;   /**< PCM 旁路（FFT/波形），可为 NULL；仅 I2S 输出生效 */
-    void                   *user;     /**< 回调 user 指针 */
+    espaudiocore_event_cb_t on_event; /**< may be NULL */
+    espaudiocore_meta_cb_t  on_meta;  /**< may be NULL */
+    espaudiocore_pcm_cb_t   on_pcm;   /**< may be NULL; device output only */
+    void                   *user;     /**< callback context */
 } espaudiocore_cfg_t;
 
 /* ===========================================================================
- * 生命周期
+ * Ring buffer
+ * =========================================================================*/
+
+/** @brief Opaque, thread-safe byte ring buffer used by the stream APIs. */
+typedef struct espaudiocore_ringbuf espaudiocore_ringbuf_t;
+
+/**
+ * @brief Allocate a ring buffer of `capacity` bytes.
+ * @return NULL on invalid size or out of memory.
+ */
+espaudiocore_ringbuf_t *espaudiocore_ringbuf_create(size_t capacity);
+
+/** @brief Free a ring buffer. Stop any session using it first. */
+void espaudiocore_ringbuf_destroy(espaudiocore_ringbuf_t *rb);
+
+/**
+ * @brief Write bytes, waiting for space.
+ *
+ * @param timeout_ms <0 wait forever, 0 do not wait, >0 wait at most this long.
+ * @return number of bytes written; may be less than `len` on timeout.
+ */
+size_t espaudiocore_ringbuf_write(espaudiocore_ringbuf_t *rb, const void *data, size_t len,
+                                  int timeout_ms);
+
+/**
+ * @brief Read bytes, waiting for data.
+ *
+ * Copies at most `len` bytes and returns as soon as some data is available.
+ * @return number of bytes read; 0 on timeout.
+ */
+size_t espaudiocore_ringbuf_read(espaudiocore_ringbuf_t *rb, void *data, size_t len,
+                                 int timeout_ms);
+
+/** @brief Bytes currently queued. */
+size_t espaudiocore_ringbuf_used(const espaudiocore_ringbuf_t *rb);
+
+/** @brief Bytes currently free. */
+size_t espaudiocore_ringbuf_space(const espaudiocore_ringbuf_t *rb);
+
+/** @brief Capacity in bytes. */
+size_t espaudiocore_ringbuf_capacity(const espaudiocore_ringbuf_t *rb);
+
+/** @brief Drop all queued bytes. */
+void espaudiocore_ringbuf_clear(espaudiocore_ringbuf_t *rb);
+
+/* ===========================================================================
+ * Lifecycle
  * =========================================================================*/
 
 /**
- * @brief 打开本地文件并**立即开始**播放（内部起解码任务，不等播放结束）。
+ * @brief Open a local file and start playing through ALSA immediately.
  *
- * @param path     绝对路径，如 "/sdcard/a.mp3"。**必须包含挂载点**，路径不合 
- *                 法时返回 ESP_ERR_INVALID_ARG。
- * @param tx       已 init_std_mode + enable 的 I2S TX 通道。生命周期由应用，
- *                 管理。
- * @param cfg      传入NULL时回退到默认值
- * @param dec_err  [out] 解码器原生错误码；仅解码阶段失败时有效，可传 NULL。
- *                 调用者可据此区分"格式不支持"与"文件损坏"。
+ * @param path    Path to the audio file. Relative and absolute paths work.
+ * @param cfg     Optional configuration (NULL = defaults).
+ * @param dec_err [out] Decoder-native error code; may be NULL.
  *
- * @return
- *  - ESP_OK
- *  - ESP_ERR_INVALID_ARG       路径不合法 / 参数为空
- *  - ESP_ERR_NOT_FOUND         文件打不开
- *  - ESP_ERR_INVALID_RESPONSE  头部解析失败
- *  - ESP_ERR_NOT_SUPPORTED     没有能处理的路由
- *  - ESP_ERR_NO_MEM            内存不足
- *  - ESP_ERR_INVALID_STATE     I2S 配置失败
+ * @return 0 on success, or one of:
+ *  - ESPAUDIOCORE_ERR_INVALID_ARG
+ *  - ESPAUDIOCORE_ERR_NOT_FOUND   file cannot be opened
+ *  - ESPAUDIOCORE_ERR_HEADER      header/container parse failure
+ *  - ESPAUDIOCORE_ERR_NOT_SUPPORTED no decoder for this file
+ *  - ESPAUDIOCORE_ERR_NO_MEM
+ *  - ESPAUDIOCORE_ERR_IO          ALSA device cannot be opened/configured
  */
-esp_err_t espaudiocore_begin(const char *path, i2s_chan_handle_t tx, const espaudiocore_cfg_t *cfg,
-                             int *dec_err);
+int espaudiocore_begin(const char *path, const espaudiocore_cfg_t *cfg, int *dec_err);
 
 /**
- * @brief 打开本地文件，把**解码后的 PCM 写进 ringbuf**（不碰任何硬件）。
+ * @brief Open a local file and write decoded PCM into a ring buffer.
  *
- * 与 espaudiocore_begin() 的唯一区别是输出端：这里写 ringbuf，由应用处理解码后的pcm。
- *
- * @param path 绝对路径（含挂载点），同 espaudiocore_begin()
- * @param out  输出 PCM 的 ringbuf，生命周期由应用层管理
- *
- * @note 应用层应采样率通过espaudiocore_get_format()获取yingbuff中的pcm格式信息。
+ * Nothing touches ALSA in this mode. The application owns the ring buffer and
+ * is responsible for its lifetime.
  */
-esp_err_t espaudiocore_begin_rb(const char *path, RingbufHandle_t out,
-                                const espaudiocore_cfg_t *cfg, int *dec_err);
+int espaudiocore_begin_rb(const char *path, espaudiocore_ringbuf_t *out,
+                          const espaudiocore_cfg_t *cfg, int *dec_err);
 
 /**
- * @brief 从 ringbuf 读压缩数据流播放（网络流、上游解码器等）。
+ * @brief Play a compressed stream from a ring buffer through ALSA.
  *
- * ringbuf 源是**纯顺序流**：不支持 seek，也不做格式探测，
- * 因此格式必须由调用者显式给出。
+ * The source is a pure sequential stream: seeking is not supported and the
+ * format must be supplied by the caller (no probing).
  *
- * @param in  输入 ringbuf（压缩/编码数据），生命周期由应用层管理
- * @param fmt 显式指定的解码格式
- * @param tx  已 init_std_mode + enable 的 I2S TX 通道
- *
- * @note 该模式下以下能力返回 ESP_ERR_NOT_SUPPORTED：
+ * @note The following capabilities return ESPAUDIOCORE_ERR_NOT_SUPPORTED:
  *       - espaudiocore_seek_ms()
- *       - 依赖 seek 的时长估算（get_duration_ms() 可能返回 <0）
- *       - 后续计划使用专用回调来通知应用层的数据源进行seek操作
+ *       - duration estimation that depends on seeking (get_duration_ms() < 0)
  */
-esp_err_t espaudiocore_begin_stream(RingbufHandle_t in, espaudiocore_format_t fmt,
-                                    i2s_chan_handle_t tx, const espaudiocore_cfg_t *cfg,
-                                    int *dec_err);
+int espaudiocore_begin_stream(espaudiocore_ringbuf_t *in, espaudiocore_format_t fmt,
+                              const espaudiocore_cfg_t *cfg, int *dec_err);
+
+/** @brief Compressed stream in, PCM stream out (no hardware involved). */
+int espaudiocore_begin_stream_rb(espaudiocore_ringbuf_t *in, espaudiocore_format_t fmt,
+                                 espaudiocore_ringbuf_t *out, const espaudiocore_cfg_t *cfg,
+                                 int *dec_err);
 
 /**
- * @brief **两端都是 ringbuf** 的流式会话：输入压缩数据、输出 PCM。
- *
- *     适合流式管道解码
- *
- *     任务A ──(压缩)──> in ringbuf ──> 本库解码 ──> out ringbuf ──> 任务B
- *
- * @param in  输入 ringbuf（压缩数据）
- * @param fmt 显式的指定解码格式
- * @param out 输出 ringbuf（PCM）
- *
- * @note 应用层应采样率通过espaudiocore_get_format()获取yingbuff中的pcm格式信息。
+ * @brief Stop playback and release every resource. Blocks until the decoder
+ *        thread has exited and the ALSA device has been drained/closed.
  */
-esp_err_t espaudiocore_begin_stream_rb(RingbufHandle_t in, espaudiocore_format_t fmt,
-                                       RingbufHandle_t out, const espaudiocore_cfg_t *cfg,
-                                       int *dec_err);
+int espaudiocore_stop(void);
 
 /**
- * @brief 停止播放并释放资源。**阻塞**至解码任务真正退出。
+ * @brief Pause output.
  *
- * 所有阻塞点都可被本调用唤醒，所以正常情况是毫秒级返回。
- * 返回后即可安全销毁 I2S 通道或 ringbuf。
+ * On ALSA output the device is paused when the driver supports it (the tail
+ * already queued is not cut off). On ring-buffer output no new PCM is written.
  */
-esp_err_t espaudiocore_stop(void);
+int espaudiocore_pause(void);
+
+/** @brief Resume after pause. */
+int espaudiocore_resume(void);
 
 /**
- * @brief 暂停：停止向输出推送新数据。
+ * @brief Seek to a position in milliseconds. Blocks until the seek took effect.
  *
- * @note 输出为 I2S 时，DMA 队列内的残留数据会继续播完，所以有
- *       dma_desc_num * dma_frame_num / sample_rate 的余音，该值由应用
- *       创建 I2S 通道时的 DMA 配置决定。需要更快的暂停响应就减小队列深度。
+ * @return ESPAUDIOCORE_ERR_NOT_SUPPORTED for stream (ring-buffer) input,
+ *         ESPAUDIOCORE_ERR_STATE when nothing is playing.
  */
-esp_err_t espaudiocore_pause(void);
+int espaudiocore_seek_ms(int64_t ms);
 
-/** @brief 恢复播放。 */
-esp_err_t espaudiocore_resume(void);
+/** @brief Set volume in dB (applied to both ALSA and ring-buffer output). */
+int espaudiocore_set_volume_db(float db);
 
-/**
- * @brief 跳转到指定位置。**阻塞**至跳转真正生效。
- *
- * @param ms 目标位置（毫秒）
- * @return ESP_ERR_NOT_SUPPORTED（ringbuf 输入）/ ESP_ERR_NOT_RUNNING / ESP_OK
- */
-esp_err_t espaudiocore_seek_ms(int64_t ms);
-
-/**
- * @brief 设置输出音量（dB）
- *
- * @param db 增益，单位 dB。
- */
-esp_err_t espaudiocore_set_volume_db(float db);
-
-/** @brief 读取当前音量设置（dB）。 */
+/** @brief Current volume in dB. */
 float espaudiocore_get_volume_db(void);
 
 /* ===========================================================================
- * 查询
+ * Queries
  * =========================================================================*/
 
 /**
- * @brief 当前播放位置（毫秒），已扣除 I2S DMA 队列内的残留时长。
+ * @brief Current playback position in milliseconds.
  *
- * 暂停期间位置冻结。未在播放时返回 0。
+ * The number of frames still buffered in ALSA is subtracted, so this reports
+ * what the listener actually hears. Frozen while paused; 0 when idle.
  */
 int64_t espaudiocore_get_position_ms(void);
 
-/** @brief 总时长（毫秒）；<0 表示未知（流式源、无 Xing 头等）。 */
+/** @brief Total duration in milliseconds; <0 when unknown (streams, no header). */
 int64_t espaudiocore_get_duration_ms(void);
 
 /**
- * @brief 当前解码输出的格式。
+ * @brief Current output format.
  *
- * 用途取决于输出方式：
- *  - 输出为 I2S：本库内部自动处理采样率变化，此接口用于观察/UI 显示。
- *  - 输出为 Ringbuf：本库不碰任何硬件，此接口是应用层**唯一**的采样率信息源，
- *    应用需自行处理（重采样 / 下游协商 / 忽略）。
+ * For ALSA output the library handles rate changes internally; this is for
+ * display and diagnostics. For ring-buffer output this is the application's
+ * only source of format information and must be handled downstream.
  *
- * 任一 out 参数可为 NULL。
+ * Any out parameter may be NULL.
  */
-esp_err_t espaudiocore_get_format(uint32_t *rate, uint8_t *channels, uint8_t *bits);
+int espaudiocore_get_format(uint32_t *rate, uint8_t *channels, uint8_t *bits);
 
-/** @brief 是否正在播放（含暂停态）。 */
+/** @brief True while a session exists and the worker has not stopped. */
 bool espaudiocore_is_running(void);
 
 #ifdef __cplusplus

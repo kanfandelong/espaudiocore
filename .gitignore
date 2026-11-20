@@ -10,10 +10,14 @@
 *.d
 *.pyc
 
-# 构建目录
+# 构建目录（scripts/build.sh 在 ~ 下构建，这里也排除本地构建）
 build/
-build_*/
+build-*/
 cmake-build-*/
+compile_commands.json
+
+# 测试素材（由 tests/gen_assets.sh 生成，不入库）
+tests/assets/
 
 # IDE / 编辑器
 .vscode/

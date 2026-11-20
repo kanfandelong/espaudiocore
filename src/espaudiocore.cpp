@@ -5,7 +5,7 @@
 
 /**
  * @file    espaudiocore.c
- * @brief   公共 API 薄封装。所有实际工作都在 audio_player.c。
+ * @brief   Public API thin wrapper. All real work lives in audio_player.c.
  */
 
 #include "espaudiocore.h"
@@ -13,60 +13,88 @@
 #include "audio_player.h"
 #include "audio_port.h"
 
+#include <errno.h>
 #include <stddef.h>
+#include <string.h>
 
-esp_err_t espaudiocore_begin(const char *path, i2s_chan_handle_t tx, const espaudiocore_cfg_t *cfg,
-                             int *dec_err)
+const char *espaudiocore_strerror(int err)
 {
-    return audio_player_start_file(path, tx, nullptr, cfg, dec_err, /*i2s_output=*/true);
-}
-
-esp_err_t espaudiocore_begin_rb(const char *path, RingbufHandle_t out,
-                                const espaudiocore_cfg_t *cfg, int *dec_err)
-{
-    if (!out) {
-        return ESP_ERR_INVALID_ARG;
+    if (err == 0)
+    {
+        return "OK";
     }
-    return audio_player_start_file(path, nullptr, reinterpret_cast<void *>(out), cfg, dec_err,
-                                   /*i2s_output=*/false);
-}
-
-esp_err_t espaudiocore_begin_stream(RingbufHandle_t in, espaudiocore_format_t fmt, i2s_chan_handle_t tx,
-                                    const espaudiocore_cfg_t *cfg, int *dec_err)
-{
-    if (!in) {
-        return ESP_ERR_INVALID_ARG;
+    if (err < 0)
+    {
+        return strerror(-err);
     }
-    return audio_player_start_stream(in, fmt, tx, nullptr, cfg, dec_err, /*i2s_output=*/true);
+    return strerror(err);
 }
 
-esp_err_t espaudiocore_begin_stream_rb(RingbufHandle_t in, espaudiocore_format_t fmt,
-                                       RingbufHandle_t out, const espaudiocore_cfg_t *cfg,
-                                       int *dec_err)
+void espaudiocore_set_log_level(int level)
 {
-    if (!in || !out) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    return audio_player_start_stream(in, fmt, nullptr, reinterpret_cast<void *>(out), cfg, dec_err,
-                                     /*i2s_output=*/false);
+    audio_log_set_level(level);
 }
 
-esp_err_t espaudiocore_stop(void)
+int espaudiocore_get_log_level(void)
+{
+    return audio_log_get_level();
+}
+
+int espaudiocore_begin(const char *path, const espaudiocore_cfg_t *cfg, int *dec_err)
+{
+    return audio_player_start_file(path, cfg ? cfg->alsa_device : nullptr, nullptr, cfg, dec_err,
+                                   /*device_output=*/true);
+}
+
+int espaudiocore_begin_rb(const char *path, espaudiocore_ringbuf_t *out,
+                          const espaudiocore_cfg_t *cfg, int *dec_err)
+{
+    if (!out)
+    {
+        return ESPAUDIOCORE_ERR_INVALID_ARG;
+    }
+    return audio_player_start_file(path, nullptr, out, cfg, dec_err, /*device_output=*/false);
+}
+
+int espaudiocore_begin_stream(espaudiocore_ringbuf_t *in, espaudiocore_format_t fmt,
+                              const espaudiocore_cfg_t *cfg, int *dec_err)
+{
+    if (!in)
+    {
+        return ESPAUDIOCORE_ERR_INVALID_ARG;
+    }
+    return audio_player_start_stream(in, fmt, cfg ? cfg->alsa_device : nullptr, nullptr, cfg,
+                                     dec_err, /*device_output=*/true);
+}
+
+int espaudiocore_begin_stream_rb(espaudiocore_ringbuf_t *in, espaudiocore_format_t fmt,
+                                 espaudiocore_ringbuf_t *out, const espaudiocore_cfg_t *cfg,
+                                 int *dec_err)
+{
+    if (!in || !out)
+    {
+        return ESPAUDIOCORE_ERR_INVALID_ARG;
+    }
+    return audio_player_start_stream(in, fmt, nullptr, out, cfg, dec_err,
+                                     /*device_output=*/false);
+}
+
+int espaudiocore_stop(void)
 {
     return audio_player_stop();
 }
 
-esp_err_t espaudiocore_pause(void)
+int espaudiocore_pause(void)
 {
     return audio_player_pause();
 }
 
-esp_err_t espaudiocore_resume(void)
+int espaudiocore_resume(void)
 {
     return audio_player_resume();
 }
 
-esp_err_t espaudiocore_seek_ms(int64_t ms)
+int espaudiocore_seek_ms(int64_t ms)
 {
     return audio_player_seek_ms(ms);
 }
@@ -81,7 +109,7 @@ int64_t espaudiocore_get_duration_ms(void)
     return audio_player_get_duration_ms();
 }
 
-esp_err_t espaudiocore_get_format(uint32_t *rate, uint8_t *channels, uint8_t *bits)
+int espaudiocore_get_format(uint32_t *rate, uint8_t *channels, uint8_t *bits)
 {
     return audio_player_get_format(rate, channels, bits);
 }
@@ -91,7 +119,7 @@ bool espaudiocore_is_running(void)
     return audio_player_is_running();
 }
 
-esp_err_t espaudiocore_set_volume_db(float db)
+int espaudiocore_set_volume_db(float db)
 {
     return audio_player_set_volume_db(db);
 }

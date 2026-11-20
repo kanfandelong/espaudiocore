@@ -25,15 +25,16 @@
 #include "xing_parser.h"
 
 #include <new>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#if defined(ESPAUDIOCORE_ENABLE_MP3)
 
 extern "C"
 {
 #include "mp3dec.h"
 }
-
-#if defined(CONFIG_ESPAUDIOCORE_ENABLE_MP3)
 
 /* 与原实现一致：1600 字节足以容纳最大 MPEG 帧（1440）+ 余量 */
 #define MP3_IN_BUF 1600
@@ -550,7 +551,7 @@ AudioDecoder *create_mp3(void)
     return new (std::nothrow) DecoderMp3();
 }
 
-#else /* !CONFIG_ESPAUDIOCORE_ENABLE_MP3 */
+#else /* !ESPAUDIOCORE_ENABLE_MP3 */
 
 bool probe_mp3(AudioInput *in)
 {

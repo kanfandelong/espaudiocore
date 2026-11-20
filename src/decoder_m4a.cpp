@@ -18,7 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if defined(CONFIG_ESPAUDIOCORE_ENABLE_M4A) && defined(CONFIG_ESPAUDIOCORE_ENABLE_AAC)
+#if defined(ESPAUDIOCORE_ENABLE_M4A) && defined(ESPAUDIOCORE_ENABLE_AAC)
 
 
 extern "C" {

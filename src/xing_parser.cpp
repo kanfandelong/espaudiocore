@@ -11,6 +11,8 @@
 #include "xing_parser.h"
 #include "audio_port.h"
 
+#include <string.h>
+
 XingHeaderInfo parseXingHeader(const uint8_t *buf, size_t len)
 {
     XingHeaderInfo info;

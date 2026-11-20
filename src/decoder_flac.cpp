@@ -16,15 +16,16 @@
 #include "decoder.h"
 
 #include <new>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#if defined(ESPAUDIOCORE_ENABLE_FLAC)
 
 extern "C"
 {
 #include "FLAC/stream_decoder.h"
 }
-
-#if defined(CONFIG_ESPAUDIOCORE_ENABLE_FLAC)
 
 /** 下混到立体声时支持的最大源声道数 */
 #define FLAC_MAX_CH 8
@@ -681,7 +682,7 @@ AudioDecoder *create_flac(void)
     return new (std::nothrow) DecoderFlac();
 }
 
-#else /* !CONFIG_ESPAUDIOCORE_ENABLE_FLAC */
+#else /* !ESPAUDIOCORE_ENABLE_FLAC */
 
 bool probe_flac(AudioInput *in)
 {

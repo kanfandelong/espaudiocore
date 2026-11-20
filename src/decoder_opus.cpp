@@ -14,15 +14,16 @@
 #include "decoder.h"
 
 #include <new>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#if defined(ESPAUDIOCORE_ENABLE_OPUS)
 
 extern "C"
 {
 #include "opusfile.h"
 }
-
-#if defined(CONFIG_ESPAUDIOCORE_ENABLE_OPUS)
 
 /** 一次 op_read_stereo 的最大样本数（帧数） */
 #define OPUS_READ_FRAMES 2048
@@ -359,7 +360,7 @@ AudioDecoder *create_opus(void)
     return new (std::nothrow) DecoderOpus();
 }
 
-#else /* !CONFIG_ESPAUDIOCORE_ENABLE_OPUS */
+#else /* !ESPAUDIOCORE_ENABLE_OPUS */
 
 bool probe_opus(AudioInput *in)
 {

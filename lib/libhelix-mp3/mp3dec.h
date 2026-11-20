@@ -61,7 +61,7 @@
 #
 #elif defined(_OPENWAVE_SIMULATOR) || defined(_OPENWAVE_ARMULATOR)
 #
-#elif defined(ESP_PLATFORM) || defined (ARDUINO)
+#elif defined(ESP_PLATFORM) || defined(ARDUINO) || defined(__x86_64__) || defined(__aarch64__) || defined(__arm__)
 #
 #else
 #error No platform defined. See valid options in mp3dec.h

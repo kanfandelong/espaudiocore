@@ -14,14 +14,15 @@
 #include "id3_parser.h"
 
 #include <new>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#if defined(ESPAUDIOCORE_ENABLE_AAC)
 
 extern "C" {
 #include "aacdec.h"
 }
-
-#if defined(CONFIG_ESPAUDIOCORE_ENABLE_AAC)
 
 /** 与原实现一致：1600 字节足够容纳一个 AAC 帧 */
 #define AAC_IN_BUF 1600
@@ -380,7 +381,7 @@ AudioDecoder *create_aac(void)
     return new (std::nothrow) DecoderAac();
 }
 
-#else /* !CONFIG_ESPAUDIOCORE_ENABLE_AAC */
+#else /* !ESPAUDIOCORE_ENABLE_AAC */
 
 bool probe_aac(AudioInput *in)
 {

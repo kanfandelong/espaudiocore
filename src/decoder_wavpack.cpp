@@ -20,11 +20,11 @@
 #include <string.h>
 #include <sys/stat.h>
 
+#if defined(ESPAUDIOCORE_ENABLE_WAVPACK)
+
 extern "C" {
 #include "wavpack.h"
 }
-
-#if defined(CONFIG_ESPAUDIOCORE_ENABLE_WAVPACK)
 
 #define WAVPACK_BLOCK_FRAMES 1024
 
