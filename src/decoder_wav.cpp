@@ -65,10 +65,22 @@ public:
                     break;
                 }
                 const uint8_t *f = hdr + off + 8;
-                audio_fmt_      = audio_rd_le16(f + 0);
+                uint16_t tag    = audio_rd_le16(f + 0);
                 channels_       = audio_rd_le16(f + 2);
                 rate_           = audio_rd_le32(f + 4);
                 bits_           = audio_rd_le16(f + 14);
+                /* WAVE_FORMAT_EXTENSIBLE (0xFFFE): 真正的格式在 SubFormat GUID
+                 * 的前两个字节（偏移 24）。ffmpeg 写 24-bit PCM 时默认用它。 */
+                if (tag == 0xFFFE) {
+                    if (csize < 40 || off + 8 + 40 > (size_t)got) {
+                        break;
+                    }
+                    uint16_t sub = audio_rd_le16(f + 24);
+                    if (sub == 1 || sub == 3) {
+                        tag = sub;
+                    }
+                }
+                audio_fmt_      = tag;
                 have_fmt        = true;
             } else if (memcmp(id, "data", 4) == 0) {
                 if (!have_fmt) {
