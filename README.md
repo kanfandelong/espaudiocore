@@ -146,6 +146,7 @@ gcc app.c -I/path/to/espaudiocore/include -L... -lespaudiocore -lpthread -ldl -l
 ```bash
 eac_play song.mp3                                   # ALSA "default"
 eac_play song.flac --device plughw:0,0              # RK3506 扬声器
+eac_play song.flac --device plughw:0,0 --seek 60000 # 从 60 s 开始
 eac_play song.ogg --raw-out /tmp/out.pcm --bits 16  # 解码到环形缓冲
 ```
 
@@ -225,13 +226,19 @@ ringbuf 源是纯顺序流：**不支持 seek**，必须显式给出格式；`ge
 | 主机 + ALSA `null`：WAV/MP3/AAC/M4A/FLAC/OGG/Opus/WavPack | 全部 STARTED→EOS→STOPPED |
 | RK3506 + ALSA `null`：8 种格式 | 全部通过 |
 | RK3506 + `plughw:0,0`：WAV / Opus(48k) / M4A / 24-bit 输出 | 打开、配置、按实时速率推进、正常停止 |
-| ringbuf 输出 vs ffmpeg：WAV 16-bit、FLAC 16-bit、WAV→24-bit | **逐字节一致** |
+| ringbuf 输出 vs ffmpeg：WAV 16-bit、FLAC 16-bit、24-bit | **逐字节一致** |
+| 真实音乐文件：FLAC 16/24-bit vs `flac -d` | **逐字节一致** |
+| 真实音乐文件：MP3/AAC/Opus vs ffmpeg | 长度一致（MP3 少 1 帧）、SNR 54–88 dB |
 | `eac_selftest`：pause 冻结 / resume / seek 1500 ms / EOS / stop | 通过 |
+
+详细数据（真实文件、性能、seek 矩阵、sanitizer）见
+[`docs/VALIDATION.md`](docs/VALIDATION.md)。
 
 ```bash
 ./scripts/build.sh
 ./tests/smoke.sh ~/espaudiocore-linux/build-host/eac_play
 ./tests/compare_pcm.sh ~/espaudiocore-linux/build-host/eac_play tests/assets
+# 有损格式对比：pcm_compare <ours.pcm> <ref.pcm> <channels> <rate>
 ./scripts/build.sh --cross
 ./scripts/board_test.sh          # 板端 null
 ./scripts/board_test.sh --alsa   # 板端真实声卡（需 root 运行 eac_play）
@@ -247,6 +254,8 @@ ringbuf 源是纯顺序流：**不支持 seek**，必须显式给出格式；`ge
 - `pause()` 对不支持 `snd_pcm_pause` 的 PCM 插件退化为“停止喂数据”，
   ALSA 缓冲里的余音会播完。
 - Opus/Vorbis 的 ringbuf **输入**不支持（容器需要 seek）；Opus/Vorbis 文件输入正常。
+- 无 Xing/Info 头的 MP3：`duration=-1`，`seek_ms()` 失败；ADTS AAC 同样不支持 seek。
+- 被截断的 FLAC 会按头部 STREAMINFO 报告时长，实际播放到数据结尾即 EOS。
 - 板端 `/dev/snd` 权限不足时 `snd_pcm_open` 返回 `ENOENT`/`EACCES`，用 root 或加 `audio` 组。
 - 第三方库有少量为 Linux 做的补丁，见下节。
 

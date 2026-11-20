@@ -360,6 +360,9 @@ endif()
 if(ESPAUDIOCORE_BUILD_TESTS)
     add_executable(eac_selftest tests/eac_selftest.c)
     target_link_libraries(eac_selftest PRIVATE eac)
+
+    add_executable(pcm_compare tests/pcm_compare.c)
+    target_link_libraries(pcm_compare PRIVATE m)
 endif()
 
 # ---------------------------------------------------------------------------

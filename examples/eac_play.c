@@ -76,6 +76,7 @@ static void usage(const char *argv0)
             "  -b, --bits <16|24|32> fixed output bit depth (default: follow source)\n"
             "  -v, --volume <db>     volume in dB (default: 0)\n"
             "  -t, --seconds <n>     stop after n seconds (default: play to EOS)\n"
+            "  -s, --seek <ms>       seek to this position before playing\n"
             "  -r, --raw-out <path>  decode to a ring buffer and write raw PCM\n"
             "  -q, --quiet           only errors\n"
             "  -h, --help            this text\n",
@@ -103,6 +104,7 @@ int main(int argc, char **argv)
     long bits = 0;
     double volume = 0.0;
     long seconds = 0;
+    long seek_ms = 0;
     int quiet = 0;
 
     for (int i = 1; i < argc; i++)
@@ -141,6 +143,14 @@ int main(int argc, char **argv)
             if (parse_int(argv[++i], &seconds) != 0 || seconds < 0)
             {
                 fprintf(stderr, "invalid --seconds\n");
+                return 2;
+            }
+        }
+        else if ((strcmp(a, "-s") == 0 || strcmp(a, "--seek") == 0) && i + 1 < argc)
+        {
+            if (parse_int(argv[++i], &seek_ms) != 0 || seek_ms < 0)
+            {
+                fprintf(stderr, "invalid --seek\n");
                 return 2;
             }
         }
@@ -190,6 +200,7 @@ int main(int argc, char **argv)
 
     int dec_err = 0;
     int rc;
+    const int64_t stop_at_ms = (seek_ms > 0 ? (int64_t)seek_ms : 0) + (int64_t)seconds * 1000;
 
     if (raw_out)
     {
@@ -217,6 +228,19 @@ int main(int argc, char **argv)
             return 1;
         }
 
+        if (seek_ms > 0)
+        {
+            rc = espaudiocore_seek_ms((int64_t)seek_ms);
+            if (rc != 0)
+            {
+                fprintf(stderr, "seek failed: %s\n", espaudiocore_strerror(rc));
+                espaudiocore_stop();
+                espaudiocore_ringbuf_destroy(rb);
+                fclose(out);
+                return 1;
+            }
+        }
+
         uint32_t rate = 0;
         uint8_t channels = 0, out_bits = 0;
         (void)espaudiocore_get_format(&rate, &channels, &out_bits);
@@ -230,7 +254,7 @@ int main(int argc, char **argv)
         uint8_t buf[65536];
         while (!g_interrupted && !g_error)
         {
-            if (seconds > 0 && espaudiocore_get_position_ms() >= (int64_t)seconds * 1000)
+            if (seconds > 0 && espaudiocore_get_position_ms() >= stop_at_ms)
             {
                 break;
             }
@@ -278,6 +302,17 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    if (seek_ms > 0)
+    {
+        rc = espaudiocore_seek_ms((int64_t)seek_ms);
+        if (rc != 0)
+        {
+            fprintf(stderr, "seek failed: %s\n", espaudiocore_strerror(rc));
+            espaudiocore_stop();
+            return 1;
+        }
+    }
+
     uint32_t rate = 0;
     uint8_t channels = 0, out_bits = 0;
     (void)espaudiocore_get_format(&rate, &channels, &out_bits);
@@ -292,7 +327,7 @@ int main(int argc, char **argv)
     while (espaudiocore_is_running() && !g_interrupted && !g_error)
     {
         usleep(50000);
-        if (seconds > 0 && espaudiocore_get_position_ms() >= (int64_t)seconds * 1000)
+        if (seconds > 0 && espaudiocore_get_position_ms() >= stop_at_ms)
         {
             break;
         }
