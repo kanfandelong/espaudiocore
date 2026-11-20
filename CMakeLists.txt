@@ -241,6 +241,7 @@ if(ESPAUDIOCORE_ENABLE_OPUS)
         "lib/libopus/silk/LPC_analysis_filter.c"
         "lib/libopus/silk/LP_variable_cutoff.c"
         "lib/libopus/silk/NLSF_encode.c"
+        "lib/libopus/silk/NLSF_del_dec_quant.c"
         "lib/libopus/silk/NSQ.c"
         "lib/libopus/silk/NSQ_del_dec.c"
         "lib/libopus/silk/pitch_est_tables.c"

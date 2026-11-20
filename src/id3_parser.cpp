@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #ifndef ESPAUDIOCORE_MAX_ID3TAG_MEM_SIZE
 #define ESPAUDIOCORE_MAX_ID3TAG_MEM_SIZE 512 /* KiB */
@@ -280,6 +281,86 @@ static void emit_picture(Id3Ctx *c, const uint8_t *d, int len, bool v2_2)
                (unsigned)m.len);
 }
 
+/*
+ * SYLT（同步歌词）→ LRC 文本。
+ *
+ * 帧结构：encoding(1) + language(3) + timestamp_format(1) + content_type(1)
+ *         + descriptor(encoding 结尾 0)
+ *         + 重复 { text(encoding 结尾 0) + timestamp(4, big-endian) }
+ *
+ * timestamp_format=2 是毫秒；=1 是 MPEG 帧号（没有帧长信息，退化成不带
+ * 时间标签的纯文本，避免对错时间轴）。输出 [mm:ss.xx] 让 media_meta 的
+ * 现成 LRC 解析器直接吃。
+ */
+static void emit_sylt(Id3Ctx *c, const uint8_t *d, int len, uint8_t enc)
+{
+    if (!c->cb || len < 6) {
+        return;
+    }
+    const bool utf16 = (enc == 1 || enc == 2);
+    const uint8_t ts_fmt = d[4];
+    int p = 6;
+
+    int skip = utf16 ? skipUTF16Null(d + p, len - p)
+                     : skipLatinNull(d + p, len - p);
+    if (skip < 0) {
+        return;
+    }
+    p += skip;
+
+    char *out = (char *)malloc(10240);
+    if (!out) {
+        return;
+    }
+    size_t on = 0;
+    const bool timed = (ts_fmt == 2);
+
+    while (p < len && on < 10000) {
+        int tl = 0;
+        if (utf16) {
+            while (p + tl + 1 < len && !(d[p + tl] == 0 && d[p + tl + 1] == 0)) {
+                tl += 2;
+            }
+        } else {
+            while (p + tl < len && d[p + tl] != 0) {
+                tl++;
+            }
+        }
+        if (tl <= 0) {
+            break;
+        }
+
+        bool uni = false;
+        char *txt = extractString(d + p, tl, enc, uni);
+        p += tl + (utf16 ? 2 : 1);
+        if (p + 4 > len) {
+            free(txt);
+            break;
+        }
+        const uint32_t ts = ((uint32_t)d[p] << 24) | ((uint32_t)d[p + 1] << 16) |
+                            ((uint32_t)d[p + 2] << 8) | (uint32_t)d[p + 3];
+        p += 4;
+
+        if (txt && txt[0]) {
+            if (timed) {
+                on += (size_t)snprintf(out + on, 10240 - on, "[%02u:%02u.%02u]%s\n",
+                                       (unsigned)(ts / 60000u),
+                                       (unsigned)((ts / 1000u) % 60u),
+                                       (unsigned)((ts % 1000u) / 10u), txt);
+            } else {
+                on += (size_t)snprintf(out + on, 10240 - on, "%s\n", txt);
+            }
+        }
+        free(txt);
+    }
+
+    if (on > 0) {
+        emit_text(c, "LYRICS", out, false);   /* emit_text 会 free(out) */
+    } else {
+        free(out);
+    }
+}
+
 static void parse_frames(Id3Ctx *c, const uint8_t *buf, size_t len, uint8_t version)
 {
     size_t pos = 0;
@@ -344,9 +425,17 @@ static void parse_frames(Id3Ctx *c, const uint8_t *buf, size_t len, uint8_t vers
             continue;
         }
 
-        /* ---- 歌词帧 ---- */
-        if (strcmp(frameId, "SYLT") == 0 || strcmp(frameId, "USLT") == 0 ||
-            (v2_2 && strcmp(frameId, "SLT") == 0)) {
+        /* ---- 同步歌词帧 SYLT：转成 LRC ---- */
+        if (strcmp(frameId, "SYLT") == 0 || (v2_2 && strcmp(frameId, "SLT") == 0)) {
+            if (dataLen >= 6) {
+                emit_sylt(c, frameData, (int)dataLen, frameData[0]);
+            }
+            pos += dataLen;
+            continue;
+        }
+
+        /* ---- 非同步歌词帧 USLT/ULT ---- */
+        if (strcmp(frameId, "USLT") == 0 || strcmp(frameId, "ULT") == 0) {
             if (dataLen < 4) {
                 pos += dataLen;
                 continue;
@@ -407,16 +496,32 @@ static void parse_frames(Id3Ctx *c, const uint8_t *buf, size_t len, uint8_t vers
             }
             uint8_t enc = frameData[0];
             int consumed = 1;
+            int desc_len = 0;
+
             if (enc == 1 || enc == 2) {
                 int skip = skipUTF16Null(frameData + consumed, (int)dataLen - consumed);
-                consumed = (skip >= 0) ? consumed : (int)dataLen;
-                if (skip >= 0) {
-                    consumed = 1 + skip;
-                }
+                desc_len = (skip > 2) ? skip - 2 : 0;
+                consumed = (skip >= 0) ? consumed + skip : (int)dataLen;
             } else {
                 int skip = skipLatinNull(frameData + consumed, (int)dataLen - consumed);
-                consumed = (skip >= 0) ? 1 + skip : (int)dataLen;
+                desc_len = (skip > 1) ? skip - 1 : 0;
+                consumed = (skip >= 0) ? consumed + skip : (int)dataLen;
             }
+
+            /* TXXX 的 description 常被用来放歌词（"LYRICS"/"UNSYNCEDLYRICS"） */
+            bool desc_is_lyrics = false;
+            if (desc_len > 0 && desc_len < 64) {
+                bool du = false;
+                char *desc = extractString(frameData + 1, desc_len, enc, du);
+                if (desc) {
+                    desc_is_lyrics = (strcasecmp(desc, "LYRICS") == 0 ||
+                                      strcasecmp(desc, "UNSYNCEDLYRICS") == 0 ||
+                                      strcasecmp(desc, "UNSYNCED LYRICS") == 0 ||
+                                      strcasecmp(desc, "LYRIC") == 0);
+                    free(desc);
+                }
+            }
+
             int textLen = (int)dataLen - consumed;
             if (textLen > 10240) {
                 textLen = 10240;
@@ -424,7 +529,7 @@ static void parse_frames(Id3Ctx *c, const uint8_t *buf, size_t len, uint8_t vers
             if (textLen > 0) {
                 bool isUnicode = false;
                 char *text = extractString(frameData + consumed, textLen, enc, isUnicode);
-                emit_text(c, frameId, text, isUnicode);
+                emit_text(c, desc_is_lyrics ? "LYRICS" : frameId, text, isUnicode);
             }
             pos += dataLen;
             continue;

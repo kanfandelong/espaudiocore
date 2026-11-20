@@ -49,7 +49,16 @@ typedef unsigned long snd_pcm_uframes_t;
 constexpr int kStreamPlayback = 0;
 constexpr int kAccessRwInterleaved = 3;
 constexpr int kFormatS16Le = 2;
-constexpr int kFormatS24_3Le = 6;
+/*
+ * ALSA snd_pcm_format_t 的实际枚举值：
+ *   S16_LE=2, S24_LE=6, S32_LE=10, S24_3LE=32。
+ *
+ * 2026-11-20 修：这里原来写的是 6（= S24_LE，4 字节容器），但
+ * convert_bits(dst_bits=24) 按 S24_3LE 的**3 字节**布局打包；于是设备把
+ * 3 字节样本当 4 字节 S24_LE 读 → 每个样本都错位，RK3506/ES8388 上表现为
+ * 持续爆音/失真（16-bit 路径正常）。正确的 S24_3LE 值是 32。
+ */
+constexpr int kFormatS24_3Le = 32;
 constexpr int kFormatS32Le = 10;
 constexpr int kNonblock = 1;
 
