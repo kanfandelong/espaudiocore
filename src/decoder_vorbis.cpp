@@ -187,8 +187,9 @@ public:
 
         if (src_ch <= 2) {
             for (size_t i = 0; i < frames; i++) {
-                int32_t l = (int32_t)pcm_[i * src_ch] << 16;
-                int32_t r = (src_ch == 1) ? l : ((int32_t)pcm_[i * src_ch + 1] << 16);
+                int32_t l = (int32_t)((uint32_t)(uint16_t)pcm_[i * src_ch] << 16);
+                int32_t r = (src_ch == 1) ? l
+                                          : (int32_t)((uint32_t)(uint16_t)pcm_[i * src_ch + 1] << 16);
                 pcm32_[i * 2 + 0] = l;
                 pcm32_[i * 2 + 1] = r;
             }
@@ -205,7 +206,7 @@ public:
             for (size_t i = 0; i < frames; i++) {
                 int64_t l = 0, r = 0;
                 for (unsigned c = 0; c < src_ch; ++c) {
-                    int64_t v = (int64_t)pcm_[i * src_ch + c] << 16;
+                    int64_t v = (int64_t)pcm_[i * src_ch + c] * 65536;
                     l += v * wl[c];
                     r += v * wr[c];
                 }

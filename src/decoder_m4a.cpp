@@ -163,12 +163,12 @@ public:
 		}
 		for (size_t i = 0; i < frames; ++i) {
 			if (frame.nChans == 1) {
-				int32_t value = (int32_t)pcm16_[i] << 16;
+				int32_t value = (int32_t)((uint32_t)(uint16_t)pcm16_[i] << 16);
 				pcm32_[i * 2] = value;
 				pcm32_[i * 2 + 1] = value;
 			} else {
-				pcm32_[i * 2] = (int32_t)pcm16_[i * 2] << 16;
-				pcm32_[i * 2 + 1] = (int32_t)pcm16_[i * 2 + 1] << 16;
+				pcm32_[i * 2] = (int32_t)((uint32_t)(uint16_t)pcm16_[i * 2] << 16);
+				pcm32_[i * 2 + 1] = (int32_t)((uint32_t)(uint16_t)pcm16_[i * 2 + 1] << 16);
 			}
 		}
 

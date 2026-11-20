@@ -128,7 +128,7 @@ public:
                 return AUDIO_ERR_IO;
             }
             for (size_t i = 0; i < nsamp; i++) {
-                pcm32_[i] = (int32_t)pcm_[i] << 16;
+                pcm32_[i] = (int32_t)((uint32_t)(uint16_t)pcm_[i] << 16);
             }
             int rc = out_->write_i32(pcm32_, valid_samples_, 16, 0);
             valid_samples_ = 0;

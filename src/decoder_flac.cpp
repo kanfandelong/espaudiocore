@@ -399,7 +399,7 @@ private:
         {
             for (unsigned i = 0; i < blocksize; i++)
             {
-                int32_t v = buffer[0][i] << sh;
+                int32_t v = (int32_t)((uint32_t)buffer[0][i] << sh);
                 dst[i * 2 + 0] = v;
                 dst[i * 2 + 1] = v;
             }
@@ -408,8 +408,8 @@ private:
         {
             for (unsigned i = 0; i < blocksize; i++)
             {
-                dst[i * 2 + 0] = buffer[0][i] << sh;
-                dst[i * 2 + 1] = buffer[1][i] << sh;
+                dst[i * 2 + 0] = (int32_t)((uint32_t)buffer[0][i] << sh);
+                dst[i * 2 + 1] = (int32_t)((uint32_t)buffer[1][i] << sh);
             }
         }
         else
@@ -469,7 +469,7 @@ private:
                 int64_t left = 0, right = 0;
                 for (unsigned c = 0; c < channels; c++)
                 {
-                    int64_t s = (int64_t)buffer[c][i] << sh;
+                    int64_t s = (int64_t)buffer[c][i] * ((int64_t)1 << sh);
                     left += s * wl[c];
                     right += s * wr[c];
                 }

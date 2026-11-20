@@ -232,7 +232,7 @@ public:
         } else {
             make_samples(buf_, frames, out_pcm_);
             for (size_t i = 0; i < nsamp; i++) {
-                pcm32_[i] = (int32_t)out_pcm_[i] << 16;
+                pcm32_[i] = (int32_t)((uint32_t)(uint16_t)out_pcm_[i] << 16);
             }
             rc = out_->write_i32(pcm32_, frames, 16, 0);
             if (rc == AUDIO_ERR_NOT_SUPPORTED) {
@@ -366,7 +366,7 @@ private:
         if (audio_fmt_ == 1) { /* PCM */
             switch (bits_) {
             case 8:
-                return (int16_t)(((int16_t)(*p) - 128) << 8);
+                return (int16_t)(((int)(*p) - 128) * 256);
             case 16:
                 return (int16_t)audio_rd_le16(p);
             case 24: {
@@ -461,14 +461,14 @@ private:
         if (audio_fmt_ == 1) { /* PCM */
             switch (bits_) {
             case 16:
-                return (int32_t)((int16_t)audio_rd_le16(p)) << 16;
+                return (int32_t)((uint32_t)(uint16_t)audio_rd_le16(p) << 16);
             case 24: {
                 int32_t v =
                     (int32_t)((uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16));
                 if (v & 0x800000) {
                     v |= (int32_t)0xFF000000;
                 }
-                return v << 8; /* 24 位有效数据放到高位 */
+                return (int32_t)((uint32_t)v << 8); /* 24 位有效数据放到高位 */
             }
             case 32:
                 return (int32_t)audio_rd_le32(p);
