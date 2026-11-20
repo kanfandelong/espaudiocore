@@ -5,8 +5,8 @@ decode worker, POSIX file/ring-buffer I/O, ALSA output. No ESP-IDF, FreeRTOS,
 I2S or "pretend the ESP API is Linux" shim layer.
 
 > `master` remains the ESP-IDF component (validated on ESP32-S3). The two
-> branches have different public APIs. This branch targets RK3506 / ARMv7
-> Linux boards and desktop Linux; do not merge it back into `master`.
+> branches have different public APIs. This branch targets ARMv7 Linux and
+> desktop Linux; do not merge it back into `master`.
 
 ---
 
@@ -25,9 +25,9 @@ I2S or "pretend the ESP API is Linux" shim layer.
 | I2S | `driver/i2s_std.h` | ALSA via `dlopen("libasound.so.2")` |
 | Paths | absolute only | relative or absolute |
 
-The old `port/linux/` shim headers (`esp_err.h`, `esp_log.h`,
-`esp_heap_caps.h`, `sdkconfig.h`, `freertos/*`, `driver/i2s_std.h`) and
-`linux_port.cpp` are gone; nothing in this branch needs them.
+The old ESP shim headers (`esp_err.h`, `esp_log.h`, `esp_heap_caps.h`,
+`sdkconfig.h`, `freertos/*`, `driver/i2s_std.h`) and `linux_port.cpp` are
+gone; nothing in this branch needs them.
 
 ---
 
@@ -35,7 +35,7 @@ The old `port/linux/` shim headers (`esp_err.h`, `esp_log.h`,
 
 ```bash
 ./scripts/build.sh                 # host build
-./scripts/build.sh --cross         # RK3506 ARMv7 cross build
+./scripts/build.sh --cross         # ARMv7 cross build
 ```
 
 Outputs:
@@ -102,8 +102,8 @@ eac_play song.flac --device plughw:0,0
 eac_play song.ogg --raw-out /tmp/out.pcm --bits 16
 ```
 
-On the board `/dev/snd` is usually root-only; run `eac_play` with `sudo` or add
-the user to the `audio` group.
+On target boards `/dev/snd` is usually root-only; run `eac_play` with `sudo` or
+add the user to the `audio` group.
 
 ---
 
@@ -130,8 +130,8 @@ Callbacks run on the decoder thread and must not block or call `stop()`.
 | Test | Result |
 |---|---|
 | Host + ALSA `null`, all 8 formats | STARTED → EOS → STOPPED |
-| RK3506 + ALSA `null`, all 8 formats | pass |
-| RK3506 + `plughw:0,0`: WAV / Opus 48k / M4A / 24-bit | opens, configures, real-time pacing, clean stop |
+| ARMv7 + ALSA `null`, all 8 formats | pass |
+| ARMv7 + `plughw:0,0`: WAV / Opus 48k / M4A / 24-bit | opens, configures, real-time pacing, clean stop |
 | Ring-buffer PCM vs ffmpeg: WAV16, FLAC16, WAV→24 | byte-identical |
 | `eac_selftest`: pause freeze, resume, seek, EOS, stop | pass |
 

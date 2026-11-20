@@ -4,9 +4,9 @@
 本分支不再包含 ESP-IDF、FreeRTOS、I2S 或任何“把 ESP API 假装成 Linux”的兼容封装层。
 
 > `master` 仍然是 ESP-IDF 组件（ESP32-S3 验证），两份代码的公开 API 不同。
-> 本分支的定位是 RK3506 / ARMv7 Linux 板卡与桌面 Linux；不要把它合回 `master`。
+> 本分支定位为 ARMv7 Linux 与桌面 Linux；不要把它合回 `master`。
 >
-> 从旧 API / `port/linux` 兼容层迁移：见 [`docs/MIGRATION.md`](docs/MIGRATION.md)。
+> 从旧 API / 兼容层迁移：见 [`docs/MIGRATION.md`](docs/MIGRATION.md)。
 
 ---
 
@@ -25,8 +25,8 @@
 | I2S | `driver/i2s_std.h` | 不再存在；ALSA 通过 `dlopen("libasound.so.2")` 调用 |
 | 路径 | 必须含挂载点的绝对路径 | 相对/绝对路径都可以 |
 
-原 `port/linux/` 里的 `esp_err.h`、`esp_log.h`、`esp_heap_caps.h`、`sdkconfig.h`、
-`freertos/*`、`driver/i2s_std.h`、`linux_port.cpp` **在本分支全部不需要**，也没有对应文件。
+旧兼容层的 ESP 头（`esp_err.h`、`esp_log.h`、`esp_heap_caps.h`、`sdkconfig.h`、
+`freertos/*`、`driver/i2s_std.h`、`linux_port.cpp`）**在本分支全部不需要**，也没有对应文件。
 
 ---
 
@@ -52,7 +52,6 @@ espaudiocore/
 ├─ compat/                        # 仅第三方库用的 pgmspace/Arduino 旧头
 ├─ examples/eac_play.c            # 命令行示例 / 冒烟测试
 ├─ tests/                         # 自测、冒烟、PCM 位精确对比、素材生成
-├─ cmake/toolchain-rk3506.cmake   # RK3506 交叉工具链
 └─ scripts/build.sh               # 主机 / 交叉构建（rsync 到 ~ 后编译）
 ```
 
@@ -63,8 +62,8 @@ espaudiocore/
 ### 3.1 依赖
 
 - Linux / WSL，`cmake >= 3.16`、`gcc/g++ >= 8`（C++17）
-- 运行期：`libasound.so.2`（板子 rootfs 自带；构建期**不需要** ALSA 开发包）
-- 交叉编译：RK3506 SDK 的 `arm-none-linux-gnueabihf` 工具链
+- 运行期：`libasound.so.2`（由目标系统提供；构建期**不需要** ALSA 开发包）
+- 交叉编译：`arm-none-linux-gnueabihf` 工具链
 
 ### 3.2 主机构建
 
@@ -73,7 +72,7 @@ espaudiocore/
 # 产物：~/espaudiocore-linux/build-host/{eac_play,libespaudiocore.a}
 ```
 
-脚本会把源码 rsync 到 `~/espaudiocore-linux/src` 再编译，避免在 9p 的 `/mnt/d` 上编译。
+脚本会把源码 rsync 到 `~/espaudiocore-linux/src` 再编译，避免在 9p/网络文件系统上直接编译。
 
 手动构建：
 
@@ -88,15 +87,14 @@ cmake --build build -j
 cmake -S . -B build -DESPAUDIOCORE_ENABLE_WAVPACK=OFF -DESPAUDIOCORE_ENABLE_OPUS=OFF
 ```
 
-### 3.3 RK3506 交叉编译
+### 3.3 ARMv7 交叉编译
 
 ```bash
 ./scripts/build.sh --cross
 # 产物：~/espaudiocore-linux/build-arm/eac_play
 ```
 
-工具链默认在 `~/rk3506_sdk/prebuilts/gcc/linux-x86/arm/gcc-arm-10.3-2021.07-...`，
-可用环境变量覆盖：
+工具链默认值可用环境变量覆盖：
 
 ```bash
 TOOLCHAIN_DIR=/opt/gcc-arm ./scripts/build.sh --cross
@@ -145,7 +143,7 @@ gcc app.c -I/path/to/espaudiocore/include -L... -lespaudiocore -lpthread -ldl -l
 
 ```bash
 eac_play song.mp3                                   # ALSA "default"
-eac_play song.flac --device plughw:0,0              # RK3506 扬声器
+eac_play song.flac --device plughw:0,0              # 板载扬声器
 eac_play song.flac --device plughw:0,0 --seek 60000 # 从 60 s 开始
 eac_play song.ogg --raw-out /tmp/out.pcm --bits 16  # 解码到环形缓冲
 ```
@@ -224,8 +222,8 @@ ringbuf 源是纯顺序流：**不支持 seek**，必须显式给出格式；`ge
 | 测试 | 结果 |
 |---|---|
 | 主机 + ALSA `null`：WAV/MP3/AAC/M4A/FLAC/OGG/Opus/WavPack | 全部 STARTED→EOS→STOPPED |
-| RK3506 + ALSA `null`：8 种格式 | 全部通过 |
-| RK3506 + `plughw:0,0`：WAV / Opus(48k) / M4A / 24-bit 输出 | 打开、配置、按实时速率推进、正常停止 |
+| ARMv7 + ALSA `null`：8 种格式 | 全部通过 |
+| ARMv7 + `plughw:0,0`：WAV / Opus(48k) / M4A / 24-bit 输出 | 打开、配置、按实时速率推进、正常停止 |
 | ringbuf 输出 vs ffmpeg：WAV 16-bit、FLAC 16-bit、24-bit | **逐字节一致** |
 | 真实音乐文件：FLAC 16/24-bit vs `flac -d` | **逐字节一致** |
 | 真实音乐文件：MP3/AAC/Opus vs ffmpeg | 长度一致（MP3 少 1 帧）、SNR 54–88 dB |
