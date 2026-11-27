@@ -49,6 +49,7 @@ set(core_srcs
     src/audio_sink_alsa.cpp
     src/audio_sink_ringbuf.cpp
     src/id3_parser.cpp
+    src/audio_picture.cpp
     src/xing_parser.cpp
     src/decoder_wav.cpp
     src/decoder_mp3.cpp
@@ -361,6 +362,9 @@ endif()
 if(ESPAUDIOCORE_BUILD_TESTS)
     add_executable(eac_selftest tests/eac_selftest.c)
     target_link_libraries(eac_selftest PRIVATE eac)
+
+    add_executable(meta_dump tests/meta_dump.c)
+    target_link_libraries(meta_dump PRIVATE eac)
 
     add_executable(pcm_compare tests/pcm_compare.c)
     target_link_libraries(pcm_compare PRIVATE m)

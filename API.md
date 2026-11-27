@@ -110,6 +110,19 @@ typedef void (*espaudiocore_meta_cb_t)(void *user,
 APIC 的 `data` 指向解析缓冲，仅在回调期间有效；需要留存请在回调里复制或落盘。
 MP3/AAC 在解码过程中估算出的时长也会以 `type == "tlen"` 的文本元数据上报。
 
+各容器的标签来源：
+
+| 容器 | 文本标签 | 封面 |
+|---|---|---|
+| MP3 / AAC / M4A | ID3v2 帧（`TIT2`/`TPE1`/…，`type` 为帧 ID） | ID3v2 `APIC`（`type == "APIC"`） |
+| FLAC | `VORBIS_COMMENT` | `METADATA_BLOCK_PICTURE`（`type == "PICTURE"`） |
+| Ogg Vorbis / Opus | `VORBIS_COMMENT` 键名 | `METADATA_BLOCK_PICTURE`、旧式 `COVERART`/`COVERARTMIME`（`type == "PICTURE"`） |
+| WAV | `LIST/INFO` 的 `INAM`/`IART`/`IPRD` → `Title`/`Artist`/`Album`；`id3 ` chunk 的 ID3v2 帧 | `id3 ` chunk 里的 `APIC` |
+
+WAV 的 `id3 ` chunk 可以出现在 `data` 之前或之后；可 seek 的源会继续扫描音频之后
+的 chunk，ring buffer 等纯流式源只解析 `data` 之前的部分。ID3v2 标签解析结束会
+上报一条 `type == "eof"` 的标记。
+
 ---
 
 ## 5. PCM 旁路

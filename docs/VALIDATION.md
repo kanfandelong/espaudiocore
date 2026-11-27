@@ -3,7 +3,8 @@
 环境：
 
 - 板卡：RK3506J，3×Cortex-A7，Linux 6.1，ALSA `plughw:0,0`
-- 主机：WSL2 Ubuntu 24.04 / x86_64，用于交叉对比和 sanitizer
+- 主机：WSL2 Ubuntu 24.04 / x86_64（gcc 13.3、cmake 3.28），用于交叉对比、
+  sanitizer 以及封面/标签元数据验证（见第 9 节）
 - 分支：`linux-native`，宿主/ARM 同一份源码
 - 真实素材：板载 USB 存储中的 MP3/FLAC/M4A/OGG/Opus/AAC（2647 个 MP3、403 个 FLAC…）
 
@@ -154,6 +155,10 @@ NULL 设备不做实时节流，因此 `elapsed` 近似纯 CPU 解码时间；`s
 ./tests/smoke.sh ~/espaudiocore-linux/build-host/eac_play tests/assets
 ./tests/compare_pcm.sh ~/espaudiocore-linux/build-host/eac_play tests/assets
 
+# 封面/标签（需要 mutagen：pip install mutagen）
+python3 tests/gen_cover_assets.py /path/to/ffmpeg tests/assets
+./tests/cover_check.sh ~/espaudiocore-linux/build-host/meta_dump tests/assets
+
 # 有损格式对比（需要自己准备 raw PCM 参考）
 ~/espaudiocore-linux/build-host/pcm_compare ours.pcm ref.pcm 2 48000
 
@@ -162,3 +167,50 @@ NULL 设备不做实时节流，因此 `elapsed` 近似纯 CPU 解码时间；`s
 ```
 
 `eac_play` 新增 `--seek <ms>`；`--seconds` 现在表示“从 seek 点起再播放 N 秒”。
+`meta_dump` 打印解码器上报的每一条元数据（文本值、图片 MIME/长度/签名），
+用于没有音频设备时校验封面解析。
+
+---
+
+## 9. master 封面元数据同步验证（WSL2 x86_64）
+
+`master` 的 `ab2cec9`（WAV/Vorbis/Opus 封面元数据）已同步到本分支；`4c14a43`
+（WAVE_FORMAT_EXTENSIBLE）在本分支的 Linux 重构 `2c80314` 中已存在。素材由
+ffmpeg 8.1 生成音频、mutagen 写入标签（`tests/gen_cover_assets.py`）。
+
+| 素材 | 布局 | 结果 |
+|---|---|---|
+| `t_cover.wav` | `fmt`/`LIST`/`data`/**`id3 `**（尾部） | `APIC` image/jpeg 248 B（`pic_type=3`），`TIT2`/`TPE1` 文本 |
+| `t_cover_pre.wav` | **`id3 `** 在 `data` 之前 | 同上 |
+| `t_list.wav` | `LIST/INFO`：`INAM`/`IART`/`IPRD` | `Title`/`Artist`/`Album` 三条文本 |
+| `t_cover.flac` | FLAC `PICTURE` 块 | `PICTURE` image/jpeg |
+| `t_cover.ogg` | `METADATA_BLOCK_PICTURE`（base64） | `PICTURE` image/jpeg + `TITLE` 文本 |
+| `t_cover.opus` | `METADATA_BLOCK_PICTURE`（base64） | `PICTURE` image/jpeg |
+| `t_legacy.opus` | 旧式 `COVERART` + `COVERARTMIME` | `PICTURE` image/png |
+| `t_badpic.ogg` | 非法 base64 + 非图片 `COVERART` | 跳过，不崩溃，无 `PICTURE` |
+
+其他结论：
+
+- **PCM 无回归**：同步前后的二进制对同一批素材（10 个合成文件、8 个标签变体
+  各 16/24-bit、24-bit 源、4 个真实文件）输出**逐字节一致**；
+  `compare_pcm.sh` 的 5 项仍与 ffmpeg 参考完全一致。
+- **24-bit WAVE_FORMAT_EXTENSIBLE**：`t24.wav`（`0xFFFE`，SubFormat `0x0001`）
+  仍按 24-bit PCM 解码，PCM 与 ffmpeg 一致。
+- **seek**：带尾部 `id3 ` chunk 的 WAV，`--seek 1500` 后的 PCM 与参考从
+  264600 字节处开始的尾部逐字节一致。
+- **流式源**：`begin_stream_rb`（ring buffer 输入，不可 seek）能解码 WAV 并
+  解析 `data` 之前的 `LIST/INFO`，PCM 一致；音频之后的 `id3 ` 不解析（预期）。
+- **sanitizer**：ASan（`detect_leaks=1`）跑完全部封面素材、10 个合成素材、
+  selftest 和 4 个真实文件，无错误/泄漏；11 种截断长度的 WAV 无崩溃。
+  UBSan 在本分支自有代码中无报告，仍有 6 条来自 vendored libogg/libvorbis
+  （与第 6 节记录的既有问题相同）。
+- **与 master 实现的差异**：master 的 chunk 扫描遇到 `data` 即停止，因此
+  mutagen/ffmpeg 常见的“`id3 ` 在音频之后”布局取不到封面；本分支在可 seek 的
+  源上跳过音频负载继续扫描尾部 chunk（流式源仍在 `data` 处停止）。
+
+复现：
+
+```bash
+python3 tests/gen_cover_assets.py tests/assets          # 需要 mutagen
+./tests/cover_check.sh ~/espaudiocore-linux/build-host/meta_dump tests/assets
+```
