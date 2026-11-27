@@ -229,18 +229,16 @@ ringbuf 源是纯顺序流：**不支持 seek**，必须显式给出格式；`ge
 | 真实音乐文件：MP3/AAC/Opus vs ffmpeg | 长度一致（MP3 少 1 帧）、SNR 54–88 dB |
 | `eac_selftest`：pause 冻结 / resume / seek 1500 ms / EOS / stop | 通过 |
 | 封面/标签：WAV（`id3` + `LIST/INFO`）、FLAC、Ogg Vorbis、Opus | 全部解析出封面/文本，坏 base64 被跳过 |
-| 同步前后 PCM 对比（全部合成素材 + 8 个标签变体 + 4 个真实文件，含 16/24-bit） | **逐字节一致** |
+| 带标签文件的 PCM vs 无标签原文件（16/24-bit） | **逐字节一致** |
 
-详细数据（真实文件、性能、seek 矩阵、sanitizer）见
+详细数据（真实文件、性能、seek 矩阵、sanitizer、封面/标签）见
 [`docs/VALIDATION.md`](docs/VALIDATION.md)。
 
 ```bash
 ./scripts/build.sh
-./tests/smoke.sh ~/espaudiocore-linux/build-host/eac_play
-./tests/compare_pcm.sh ~/espaudiocore-linux/build-host/eac_play tests/assets
-# 封面/标签：需要 mutagen 生成素材，再用 meta_dump 校验
-python3 tests/gen_cover_assets.py tests/assets
-./tests/cover_check.sh ~/espaudiocore-linux/build-host/meta_dump tests/assets
+# <build-dir>：脚本构建的 build-host，或按 3.2 手动构建的 build
+./tests/smoke.sh <build-dir>/eac_play
+./tests/compare_pcm.sh <build-dir>/eac_play tests/assets
 # 有损格式对比：pcm_compare <ours.pcm> <ref.pcm> <channels> <rate>
 ./scripts/build.sh --cross
 ./scripts/board_test.sh          # 板端 null

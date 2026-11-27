@@ -135,14 +135,12 @@ Callbacks run on the decoder thread and must not block or call `stop()`.
 | Ring-buffer PCM vs ffmpeg: WAV16, FLAC16, WAV→24 | byte-identical |
 | `eac_selftest`: pause freeze, resume, seek, EOS, stop | pass |
 | Cover art / tags: WAV (`id3` + `LIST/INFO`), FLAC, Ogg Vorbis, Opus | pictures and text parsed; bad base64 skipped |
-| Pre/post-sync PCM comparison (16 assets × 16/24-bit + real files) | **bit-identical** |
+| PCM of tagged files vs untagged originals (16/24-bit) | **bit-identical** |
 
 ```bash
-./tests/smoke.sh ~/espaudiocore-linux/build-host/eac_play
-./tests/compare_pcm.sh ~/espaudiocore-linux/build-host/eac_play tests/assets
-# cover art / tags (needs mutagen to generate the assets)
-python3 tests/gen_cover_assets.py tests/assets
-./tests/cover_check.sh ~/espaudiocore-linux/build-host/meta_dump tests/assets
+# <build-dir>: build-host from scripts/build.sh, or build from a manual cmake build
+./tests/smoke.sh <build-dir>/eac_play
+./tests/compare_pcm.sh <build-dir>/eac_play tests/assets
 ./scripts/board_test.sh --alsa
 ```
 
