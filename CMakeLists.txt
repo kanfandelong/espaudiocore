@@ -23,6 +23,7 @@ set(srcs
     "src/audio_sink_ringbuf.cpp"
     "src/port/audio_port.c"
     "src/id3_parser.cpp"
+    "src/audio_picture.cpp"
     "src/xing_parser.cpp"
     "src/decoder_wav.cpp"
     "src/decoder_mp3.cpp"

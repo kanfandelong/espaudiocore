@@ -12,6 +12,7 @@
 #include "audio_port.h"
 #include "audio_types.h"
 #include "decoder.h"
+#include "audio_picture.h"
 
 #include <new>
 #include <stdlib.h>
@@ -282,6 +283,13 @@ private:
             }
             memcpy(key, e, klen);
             key[klen] = '\0';
+
+            /* Opus uses the same base64 FLAC picture comment as Vorbis. */
+            if (audio_emit_picture_comment(key, eq + 1,
+                                           (size_t)(len - klen - 1),
+                                           meta_cb_, meta_user_)) {
+                continue;
+            }
 
             espaudiocore_meta_t m = {};
             m.type = key;

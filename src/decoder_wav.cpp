@@ -12,6 +12,7 @@
 #include "audio_types.h"
 #include "decoder.h"
 #include "audio_downmix.h"
+#include "id3_parser.h"
 
 #include <new>
 #include <stdlib.h>
@@ -19,10 +20,66 @@
 
 #if defined(CONFIG_ESPAUDIOCORE_ENABLE_WAV)
 
-#define WAV_HEADER_SCAN_MAX 4096
 #define WAV_OUT_FRAMES      512 /**< 每次 decode 输出的立体声帧数 */
 /** 统一 int32 域缓冲容量（采样点数，每帧 L/R） */
 #define WAV_I32_CAP (WAV_OUT_FRAMES * 2)
+
+static void report_wav_text(espaudiocore_meta_cb_t cb, void *user, const char *type,
+                            const uint8_t *data, size_t len)
+{
+    if (!cb || !type || !data || len == 0) {
+        return;
+    }
+    char text[128];
+    size_t n = len < sizeof(text) - 1 ? len : sizeof(text) - 1;
+    memcpy(text, data, n);
+    text[n] = '\0';
+    while (n > 0 && (text[n - 1] == '\0' || text[n - 1] == ' ')) {
+        text[--n] = '\0';
+    }
+    if (n == 0) {
+        return;
+    }
+
+    espaudiocore_meta_t m = {};
+    m.type = type;
+    m.is_binary = false;
+    m.data = text;
+    m.len = n;
+    m.pic_type = -1;
+    cb(user, &m);
+}
+
+/** Parse the RIFF LIST/INFO sub-chunks used by many WAV taggers. */
+static void report_list_info(const uint8_t *buf, size_t len,
+                             espaudiocore_meta_cb_t cb, void *user)
+{
+    if (!buf || len < 4 || memcmp(buf, "INFO", 4) != 0) {
+        return;
+    }
+    size_t pos = 4;
+    while (pos + 8 <= len) {
+        const uint8_t *id = buf + pos;
+        uint32_t size = audio_rd_le32(buf + pos + 4);
+        pos += 8;
+        if (size > len - pos) {
+            break;
+        }
+
+        const char *type = nullptr;
+        if (memcmp(id, "INAM", 4) == 0) {
+            type = "Title";
+        } else if (memcmp(id, "IART", 4) == 0) {
+            type = "Artist";
+        } else if (memcmp(id, "IPRD", 4) == 0) {
+            type = "Album";
+        }
+        if (type) {
+            report_wav_text(cb, user, type, buf + pos, size);
+        }
+        pos += size + (size & 1u);
+    }
+}
 
 class DecoderWav : public AudioDecoder {
 public:
@@ -34,10 +91,10 @@ public:
     audio_err_t open(AudioInput *in, AudioSink *out, espaudiocore_meta_cb_t meta_cb, void *meta_user,
                      audio_format_t *fmt, int64_t *duration_ms, int *dec_err) override
     {
-        (void)meta_cb;
-        (void)meta_user;
         in_  = in;
         out_ = out;
+        meta_cb_ = meta_cb;
+        meta_user_ = meta_user;
         if (dec_err) {
             *dec_err = AUDIO_DEC_ERR_NONE;
         }
@@ -45,34 +102,66 @@ public:
             *duration_ms = -1;
         }
 
-        uint8_t hdr[WAV_HEADER_SCAN_MAX];
-        int got = in_->peek(hdr, sizeof(hdr), 12);
-        if (got < 12 || memcmp(hdr, "RIFF", 4) != 0 || memcmp(hdr + 8, "WAVE", 4) != 0) {
+        uint8_t riff[12];
+        if (in_->read_full(riff, sizeof(riff)) != sizeof(riff) ||
+            memcmp(riff, "RIFF", 4) != 0 || memcmp(riff + 8, "WAVE", 4) != 0) {
             if (dec_err) {
                 *dec_err = AUDIO_DEC_ERR_PARSE;
             }
             return AUDIO_ERR_PARSE;
         }
 
-        /* 逐个 chunk 扫描（在 peek 缓冲范围内），找到 fmt 与 data */
-        size_t off = 12;
+        auto skip_bytes = [this](uint64_t bytes) -> bool {
+            if (bytes == 0) {
+                return true;
+            }
+            if (in_->can_seek()) {
+                return in_->seek((int64_t)bytes, SEEK_CUR) == AUDIO_OK;
+            }
+            uint8_t sink[256];
+            while (bytes > 0) {
+                size_t chunk = bytes < sizeof(sink) ? (size_t)bytes : sizeof(sink);
+                int n = in_->read(sink, chunk);
+                if (n <= 0) {
+                    return false;
+                }
+                bytes -= (uint64_t)n;
+            }
+            return true;
+        };
+
+        /* Scan every RIFF chunk, including chunks that do not fit in a small
+         * peek window.  WAV cover art is normally an ID3 chunk ("id3 "). */
         bool have_fmt = false;
-        while (off + 8 <= (size_t)got) {
-            uint32_t csize = audio_rd_le32(hdr + off + 4);
-            const uint8_t *id = hdr + off;
-            if (memcmp(id, "fmt ", 4) == 0) {
-                if (off + 8 + 16 > (size_t)got) {
+        bool have_data = false;
+        int64_t data_offset = 0;
+        for (;;) {
+            uint8_t chunk[8];
+            if (in_->read_full(chunk, sizeof(chunk)) != sizeof(chunk)) {
+                break;
+            }
+            uint32_t csize = audio_rd_le32(chunk + 4);
+            uint64_t padded = (uint64_t)csize + (csize & 1u);
+
+            if (memcmp(chunk, "fmt ", 4) == 0) {
+                /* Read the basic 16-byte WAVEFORMAT plus the optional
+                 * WAVEFORMATEXTENSIBLE fields (SubFormat starts at +24). */
+                uint8_t f[40];
+                size_t fsize = csize < sizeof(f) ? csize : sizeof(f);
+                if (csize < 16 || fsize < 16 ||
+                    in_->read_full(f, fsize) != fsize) {
                     break;
                 }
-                const uint8_t *f = hdr + off + 8;
-                uint16_t tag    = audio_rd_le16(f + 0);
-                channels_       = audio_rd_le16(f + 2);
-                rate_           = audio_rd_le32(f + 4);
-                bits_           = audio_rd_le16(f + 14);
+
+                uint16_t tag = audio_rd_le16(f + 0);
+                channels_    = audio_rd_le16(f + 2);
+                rate_        = audio_rd_le32(f + 4);
+                bits_        = audio_rd_le16(f + 14);
+
                 /* WAVE_FORMAT_EXTENSIBLE (0xFFFE): 真正的格式在 SubFormat GUID
                  * 的前两个字节（偏移 24）。ffmpeg 写 24-bit PCM 时默认用它。 */
                 if (tag == 0xFFFE) {
-                    if (csize < 40 || off + 8 + 40 > (size_t)got) {
+                    if (csize < 40 || fsize < 40) {
                         break;
                     }
                     uint16_t sub = audio_rd_le16(f + 24);
@@ -80,22 +169,82 @@ public:
                         tag = sub;
                     }
                 }
-                audio_fmt_      = tag;
-                have_fmt        = true;
-            } else if (memcmp(id, "data", 4) == 0) {
-                if (!have_fmt) {
-                    break; /* data 在 fmt 之前：异常文件 */
+                audio_fmt_ = tag;
+                have_fmt   = true;
+                if (!skip_bytes(padded - fsize)) {
+                    break;
                 }
+                continue;
+            }
+
+            if (memcmp(chunk, "data", 4) == 0) {
+                if (!have_fmt) {
+                    AUDIO_LOGE("WAV data chunk before fmt chunk");
+                }
+                data_offset = in_->tell();
                 data_bytes_ = csize;
-                /* 数据从当前逻辑位置往后 off+8 处开始（peek 未移动位置） */
-                data_skip_ = off + 8;
+                have_data = have_fmt && csize > 0;
                 break;
             }
-            off += 8 + csize + (csize & 1); /* chunk 按偶数字节对齐 */
+
+            if ((memcmp(chunk, "id3 ", 4) == 0 || memcmp(chunk, "ID3 ", 4) == 0) &&
+                csize >= 10) {
+                const int64_t payload_start = in_->tell();
+                uint8_t sig[3];
+                bool is_id3 = in_->peek(sig, sizeof(sig), sizeof(sig)) ==
+                                  (int)sizeof(sig) &&
+                              memcmp(sig, "ID3", 3) == 0;
+                if (is_id3) {
+                    (void)id3_parse_and_report(in_, meta_cb_, meta_user_);
+                }
+                /* The ID3 parser stops after the tag; skip the rest of the
+                 * RIFF chunk (including any footer/padding) to stay aligned. */
+                uint64_t used = 0;
+                int64_t after = in_->tell();
+                if (after > payload_start) {
+                    used = (uint64_t)(after - payload_start);
+                }
+                if (used > padded) {
+                    used = padded;
+                }
+                if (!skip_bytes(padded - used)) {
+                    break;
+                }
+                continue;
+            }
+
+            if (memcmp(chunk, "LIST", 4) == 0 && csize >= 4) {
+                uint8_t info[2048];
+                size_t want = csize < sizeof(info) ? csize : sizeof(info);
+                size_t got = in_->read_full(info, want);
+                report_list_info(info, got, meta_cb_, meta_user_);
+                if (!skip_bytes(padded - got)) {
+                    break;
+                }
+                continue;
+            }
+
+            if (!skip_bytes(padded)) {
+                break;
+            }
         }
 
-        if (!have_fmt || data_bytes_ == 0 || channels_ == 0 || channels_ > 8 ||
-            rate_ == 0 || bits_ == 0) {
+        /* decode() starts at byte 0 and skips to the data payload.  Stream
+         * sources cannot rewind, so they are left positioned at the payload. */
+        if (in_->can_seek()) {
+            if (!have_data || in_->seek(0, SEEK_SET) != AUDIO_OK) {
+                if (dec_err) {
+                    *dec_err = AUDIO_DEC_ERR_PARSE;
+                }
+                return AUDIO_ERR_PARSE;
+            }
+            data_skip_ = (uint32_t)data_offset;
+        } else {
+            data_skip_ = 0;
+        }
+
+        if (!have_fmt || !have_data || data_bytes_ == 0 || channels_ == 0 ||
+            channels_ > 8 || rate_ == 0 || bits_ == 0) {
             if (dec_err) {
                 *dec_err = AUDIO_DEC_ERR_PARSE;
             }
@@ -490,6 +639,8 @@ private:
     AudioInput *in_ = nullptr;
     AudioSink  *out_ = nullptr;
     uint8_t    *buf_ = nullptr;
+    espaudiocore_meta_cb_t meta_cb_ = nullptr;
+    void *meta_user_ = nullptr;
 
     uint16_t audio_fmt_ = 0;      /**< 1 = PCM, 3 = float */
     bool     wide_out_ = false;   /**< true = 走 int32 输出路径（24/32-bit / float32） */

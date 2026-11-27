@@ -449,12 +449,13 @@ size_t id3_parse_and_report(AudioInput *in, espaudiocore_meta_cb_t meta_cb, void
         return 0;
     }
 
+    const int64_t start = in->tell();
     uint8_t header[10];
     int got = in->read(header, sizeof(header));
     if (got < 10 || memcmp(header, "ID3", 3) != 0) {
-        /* 没有 ID3：把读掉的字节退回去（仅当可 seek） */
+        /* 没有 ID3：把读掉的字节退回到调用起点（WAV 的 id3 chunk 不是 0） */
         if (got > 0 && in->can_seek()) {
-            (void)in->seek(0, SEEK_SET);
+            (void)in->seek(start, SEEK_SET);
         } else if (got > 0) {
             /* 流式源无法回退 */
             AUDIO_LOGW("non-seekable source: %d bytes consumed while probing ID3", got);
@@ -464,9 +465,9 @@ size_t id3_parse_and_report(AudioInput *in, espaudiocore_meta_cb_t meta_cb, void
 
     uint8_t version = header[3];
     if (version < 2 || version > 4 || header[4] != 0) {
-        /* 非法或非 2.x：回退 */
+        /* 非法或非 2.x：回退到调用起点 */
         if (in->can_seek()) {
-            (void)in->seek(0, SEEK_SET);
+            (void)in->seek(start, SEEK_SET);
         }
         return 0;
     }

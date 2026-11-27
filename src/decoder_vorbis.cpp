@@ -14,6 +14,7 @@
 #include "audio_types.h"
 #include "decoder.h"
 #include "audio_downmix.h"
+#include "audio_picture.h"
 
 #include <new>
 #include <stdlib.h>
@@ -326,9 +327,16 @@ private:
             memcpy(key, e, klen);
             key[klen] = '\0';
 
+            /* Vorbis stores the FLAC picture block as a base64 comment. */
+            if (audio_emit_picture_comment(key, eq + 1,
+                                           (size_t)(len - klen - 1),
+                                           meta_cb_, meta_user_)) {
+                continue;
+            }
+
             espaudiocore_meta_t m = {};
             m.type      = key;
-            m.is_binary = false; /* METADATA_BLOCK_PICTURE 是 base64，此处按文本透传 */
+            m.is_binary = false;
             m.data      = eq + 1;
             m.len       = (size_t)(len - klen - 1);
             m.pic_type  = -1;
